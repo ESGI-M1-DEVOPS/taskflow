@@ -17,6 +17,15 @@
     dest: "{{ staging_dir }}/deploy/compose/.env"
     mode: "0600"
 
+# Images privées : identifiants stockés dans /root/.docker/config.json (docker compose tourne en root).
+- name: Connexion à la registry privée (lecture des images)
+  ansible.builtin.command:
+    cmd: "docker login {{ registry }} --username {{ registry_username }} --password-stdin"
+    stdin: "{{ registry_password }}"
+  when: registry_password | default('') | length > 0
+  changed_when: false
+  no_log: true
+
 - name: Télécharger les images de la version demandée
   ansible.builtin.command: docker compose pull --quiet
   args:

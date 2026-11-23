@@ -111,9 +111,11 @@ jobs:
       - name: Calcul des tags
         id: vars
         run: |
-          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          echo "db_tag=$(tr -d '[:space:]' < app/db/VERSION)" >> "$GITHUB_OUTPUT"
+          {
+            echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
+            echo "tag=${GITHUB_SHA::7}"
+            echo "db_tag=$(tr -d '[:space:]' < app/db/VERSION)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build des images (tag = SHA du commit)
         env:
@@ -180,11 +182,12 @@ jobs:
           SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         run: |
           install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
-          jq -n --arg db "$DB_PASSWORD" --arg gf "$GRAFANA_PASSWORD" \
-            '{db_password: $db, grafana_admin_password: $gf}' > "$RUNNER_TEMP/secrets.json"
+          jq -n --arg db "$DB_PASSWORD" --arg gf "$GRAFANA_PASSWORD" --arg reg "$REGISTRY_TOKEN" \
+            '{db_password: $db, grafana_admin_password: $gf, registry_password: $reg}' > "$RUNNER_TEMP/secrets.json"
           chmod 600 "$RUNNER_TEMP/secrets.json"
 
       - name: Collections Ansible
@@ -220,10 +223,12 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         run: |
           install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
-          jq -n --arg db "$DB_PASSWORD" '{db_password: $db}' > "$RUNNER_TEMP/secrets.json"
+          jq -n --arg db "$DB_PASSWORD" --arg reg "$REGISTRY_TOKEN" \
+            '{db_password: $db, registry_password: $reg}' > "$RUNNER_TEMP/secrets.json"
           chmod 600 "$RUNNER_TEMP/secrets.json"
 
       - name: Collections Ansible
@@ -246,7 +251,7 @@ jobs:
           PROD_URL: ${{ vars.PROD_URL }}
           TAG: ${{ needs.build.outputs.tag }}
         run: |
-          for i in $(seq 1 12); do
+          for _ in $(seq 1 12); do
             if curl -fsS "$PROD_URL/api/version" | grep -q "\"$TAG\""; then
               echo "Production servie en version $TAG"; exit 0
             fi

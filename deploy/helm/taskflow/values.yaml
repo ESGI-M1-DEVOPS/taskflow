@@ -8,7 +8,12 @@ image:
   owner: ""            # compte/organisation de la registry (en minuscules)
   tag: latest          # tag commun frontend + backend (SHA du commit en CD)
   pullPolicy: IfNotPresent
-pullSecrets: []        # ex: [{name: ghcr-pull}] si les images sont privées
+# Registry privée : identifiants de LECTURE des images (jeton GitHub classique "read:packages").
+# Si password est renseigné, la chart crée un secret docker-registry utilisé par tous les pods.
+registryAuth:
+  username: ""
+  password: ""
+pullSecrets: []        # secrets d'accès déjà présents dans le namespace, ex: [{name: mon-secret}]
 clusterDomain: cluster.local
 
 backend:
