@@ -186,7 +186,8 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 | Logs centralisés | Loki reçoit les logs, labels `component` (backend, frontend, db…) et `level` (info, warn, error…) |
 | Staging | 6 conteneurs (application + Prometheus, Grafana, cAdvisor) démarrés et sains |
 
-Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeline (étapes 6 et 7 du tutoriel).
+| Déploiement continu de bout en bout (run #7, puis run #9) | Build, images privées sur GHCR, runner self-hosted sur Proxmox, Ansible, staging, puis production après approbation |
+| **Zero-downtime en production réelle**, rolling update déclenché par la CI et sondé toutes les 0,3 s | **285 requêtes pendant la bascule, 0 erreur** ; anciens et nouveaux pods ont répondu en alternance pendant ~6 s |
 
 ## Difficultés rencontrées et solutions
 
@@ -197,6 +198,7 @@ Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeli
 | Une mise à jour casse `/api` alors que Helm la déclare réussie | Le frontend est « prêt » (sa sonde ne teste pas le backend), donc `--atomic` ne voit rien | Smoke test post-déploiement frontend → backend → BDD dans Ansible, avec `helm rollback` automatique en cas d'échec |
 | Arrêt gracieux interrompu (SIGKILL au bout de 3 s) en compose | Délai d'arrêt Docker trop court | `stop_grace_period: 20s` explicite |
 | Premier `site.yml` en échec : `swapoff: Not superuser.` alors qu'on est root | Les « VM » Proxmox étaient des **conteneurs LXC** à 1 CPU / 512 Mo : pas assez de droits noyau ni de RAM pour k3s | Recréation en vraies VM KVM ; garde-fous Ansible en tête du rôle `common` (refus des conteneurs, RAM minimale) pour échouer tout de suite avec un message clair |
+| La relance d'un ancien run (#7) a redéployé une version **plus ancienne** que celle déjà en production (#9) | Une relance rejoue le commit d'origine, et l'approbation de la production ne vérifie pas que c'est le dernier | Garde-fou dans les jobs de déploiement : refus si le commit n'est pas le dernier de `main`. Retour arrière volontaire : `git revert` + PR, ou `helm rollback` |
 | Déploiement CI en échec, Ansible `UNREACHABLE`, alors que la clé fonctionne en manuel | Secret `ANSIBLE_SSH_PRIVATE_KEY` abîmé au copier-coller : le job ne présentait aucune clé valide (vu dans le journal sshd) | Copie par `Set-Clipboard` ; le workflow nettoie et valide la clé avec `ssh-keygen` et affiche son empreinte |
 | Premier job de déploiement en échec (`Collections Ansible`) juste après l'installation du runner | Le rôle `github_runner` démarrait le service **avant** d'installer Ansible : le runner a pris un job en attente dans la seconde | Installation d'Ansible déplacée avant l'enregistrement et le démarrage du runner |
 | Pas de métriques par conteneur avec cAdvisor sous Docker Desktop | cAdvisor ne voit pas les conteneurs de Docker Desktop | En production, on utilise le cAdvisor intégré au kubelet (k3s) ; sur la VM staging, le daemon Docker accepte les anciens clients API |
@@ -219,6 +221,13 @@ Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeli
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 23/11/2026 : premier déploiement continu complet, refus des versions obsolètes
+- Secret `ANSIBLE_SSH_PRIVATE_KEY` recopié proprement : la relance du run #7 déploie le staging, puis la production après approbation.
+- Zero-downtime mesuré en production réelle pendant le rolling update déclenché par la CI : 285 requêtes, 0 erreur.
+- Incident : le run #9 (`f09c472`, PR #4) avait déjà déployé la production ; la relance approuvée du run #7 (`ff90456`) l'a ramenée à une version plus ancienne.
+- Workflow : nouvelle étape « Refuser un déploiement obsolète » dans les jobs staging et production. Le déploiement est refusé si le commit du run n'est plus le dernier de `main`. Testé : ancien commit refusé, dernier commit accepté.
+- Tutoriel : dépannage « déploiement obsolète refusé » et procédure de retour arrière.
 
 ### 23/11/2026 : runner GitHub en service
 - Étape 6 : secrets, variables, environnement `production` configurés dans GitHub ; runner `staging-1` installé (service systemd, label `proxmox`) et connecté.
