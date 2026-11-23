@@ -311,7 +311,7 @@ Tout se passe dans `https://github.com/ESGI-M1-DEVOPS/taskflow/settings`.
 
 | Nom | Valeur |
 |---|---|
-| `ANSIBLE_SSH_PRIVATE_KEY` | sortie de `cat ~/.ssh/ansible` sur staging-1, **lignes BEGIN et END comprises** |
+| `ANSIBLE_SSH_PRIVATE_KEY` | sortie de `cat ~/.ssh/ansible` sur staging-1, **lignes BEGIN et END comprises**. Pour éviter les erreurs de sélection, copier directement dans le presse-papiers depuis PowerShell : `ssh admin@10.1.20.72 "cat ~/.ssh/ansible" \| Set-Clipboard`, puis coller dans le secret. Si `Set-Clipboard` répond « Échec de l'opération du Presse-papiers », le presse-papiers est occupé : relancer la commande. Éviter `\| clip`, qui ajoute un caractère invisible (BOM) en tête |
 | `DB_PASSWORD` | **la même** valeur que `db_password` dans `secrets.yml` |
 | `GRAFANA_ADMIN_PASSWORD` | **la même** valeur que `grafana_admin_password` |
 | `GHCR_READ_TOKEN` | le jeton de lecture des images de l'étape 3.5 (= `registry_password`) |
@@ -389,6 +389,7 @@ C'est le circuit à suivre pour **toute** modification.
 | `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED` en SSH depuis Windows | VM recréée à la même IP : nouvelle clé d'hôte | `ssh-keygen -R <IP>` puis se reconnecter |
 | `ansible all ...` : `Permission denied (publickey)` | clé non copiée sur une VM | refaire `ssh-copy-id -i ~/.ssh/ansible.pub admin@<IP>` |
 | `Missing sudo password` | premier lancement sans `-K` | relancer avec `-K` |
+| Job CI de déploiement en échec, Ansible `UNREACHABLE` / code de sortie 4 | secret `ANSIBLE_SSH_PRIVATE_KEY` mal copié, ou clé d'une ancienne VM | recopier la clé (méthode `Set-Clipboard` de l'étape 6.1) puis *Re-run failed jobs* ; le job affiche l'empreinte de la clé chargée, à comparer avec `ssh-keygen -lf ~/.ssh/ansible.pub` sur staging-1 |
 | Job CI en échec : `sudo: a password is required` | `site.yml` n'a jamais été mené jusqu'au rôle `common` | relancer `site.yml -e @secrets.yml -K` depuis staging-1 |
 | Le worker k8s-2 n'apparaît pas dans `kubectl get nodes` | VM clonée : hostname ou machine-id identiques | encadré de l'étape 1, puis `sudo /usr/local/bin/k3s-agent-uninstall.sh` sur k8s-2 et relancer `site.yml` |
 | Pods en `ImagePullBackOff`, ou `unauthorized` au `docker compose pull` | jeton de lecture absent, expiré ou sans `read:packages` | étape 3.5 ; vérifier `registry_password` dans `secrets.yml` et le secret `GHCR_READ_TOKEN`, puis relancer le déploiement |

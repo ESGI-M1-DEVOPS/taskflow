@@ -48,6 +48,25 @@
   failed_when: false
   changed_when: runner_deps.rc == 0
 
+# Les jobs de déploiement lancent Ansible depuis cette VM. À installer AVANT d'enregistrer
+# et de démarrer le runner : sinon il prend un job en attente avant qu'Ansible soit là
+# (vécu : run #3 en échec à l'étape « Collections Ansible »).
+- name: Installer Ansible dans un environnement virtuel
+  ansible.builtin.pip:
+    name: ansible-core>=2.17
+    virtualenv: /opt/ansible
+    virtualenv_command: python3 -m venv
+
+- name: Rendre les commandes Ansible disponibles
+  ansible.builtin.file:
+    src: "/opt/ansible/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop:
+    - ansible
+    - ansible-playbook
+    - ansible-galaxy
+
 - name: Enregistrer le runner auprès du dépôt GitHub
   ansible.builtin.command: >-
     ./config.sh --unattended --replace
@@ -72,20 +91,3 @@
   args:
     chdir: /home/github-runner/actions-runner
   changed_when: false
-
-# Les jobs de déploiement lancent Ansible depuis cette VM.
-- name: Installer Ansible dans un environnement virtuel
-  ansible.builtin.pip:
-    name: ansible-core>=2.17
-    virtualenv: /opt/ansible
-    virtualenv_command: python3 -m venv
-
-- name: Rendre les commandes Ansible disponibles
-  ansible.builtin.file:
-    src: "/opt/ansible/bin/{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
-    state: link
-  loop:
-    - ansible
-    - ansible-playbook
-    - ansible-galaxy
