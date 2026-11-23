@@ -2,21 +2,22 @@
 
 Le sujet exige que **tout conteneur de n'importe quelle équipe DevOps puisse être déployé sur n'importe quelle plateforme SysOps**. Ce document propose les règles communes à valider entre toutes les équipes. Notre équipe tient les deux rôles : la partie A décrit ce que notre plateforme garantit, la partie B ce que nous attendons des applications, et nos propres images respectent la partie B.
 
-> Proposition de l'équipe TaskFlow, version 1 du 23/11/2026. À amender ensemble.
+> Proposition de l'équipe TaskFlow, version 1.1 du 23/11/2026. À amender ensemble.
+> Notre plateforme est en service : production sur http://10.1.20.73 (accès via Twingate, sur demande). Les versions exactes sont dans le [README](../README.md#versions-déployées).
 
 ## A. Ce que fournit la plateforme (SysOps)
 
 | # | Garantie | Notre implémentation |
 |---|---|---|
-| A1 | Cluster Kubernetes ≥ 1.30, au moins 2 nœuds, architecture `linux/amd64` | k3s, 2 VM Proxmox |
+| A1 | Cluster Kubernetes ≥ 1.30, au moins 2 nœuds, architecture `linux/amd64` | k3s v1.37.2, 2 VM Proxmox (k8s-1, k8s-2) |
 | A2 | Un namespace par équipe et un kubeconfig fourni à l'équipe | `kubectl create namespace <equipe>` |
-| A3 | Ingress HTTP sur le port 80, classe par défaut (pas besoin de `ingressClassName`) | Traefik (inclus dans k3s) |
+| A3 | Ingress HTTP sur le port 80, classe par défaut (pas besoin de `ingressClassName`) | Traefik v3.7 (inclus dans k3s), sur les 2 nœuds |
 | A4 | Routage par nom d'hôte quand plusieurs applications cohabitent | `<appli>.<IP>.nip.io` |
 | A5 | StorageClass par défaut pour les volumes persistants (ReadWriteOnce) | `local-path` |
 | A6 | metrics-server disponible : les HPA sur CPU et mémoire fonctionnent | inclus dans k3s |
-| A7 | Prometheus Operator : tout `ServiceMonitor`, quel que soit son namespace, est collecté | kube-prometheus-stack |
+| A7 | Prometheus Operator : tout `ServiceMonitor`, quel que soit son namespace, est collecté | kube-prometheus-stack (Prometheus v3.16) |
 | A8 | Grafana : toute ConfigMap portant le label `grafana_dashboard: "1"` est importée comme dashboard | sidecar Grafana, tous namespaces |
-| A9 | Les logs stdout/stderr de tous les pods sont centralisés et interrogeables par namespace, pod, conteneur et niveau | Loki + Alloy |
+| A9 | Les logs stdout/stderr de tous les pods sont centralisés et interrogeables par namespace, pod, conteneur et niveau | Loki 3.6 + Alloy : labels `namespace`, `pod`, `container`, `app`, `component`, `level` |
 | A10 | Accès en lecture à Grafana pour chaque équipe | NodePort 30300 |
 | A11 | Images privées acceptées : secret `docker-registry` dans le namespace de l'équipe, référencé par `imagePullSecrets` | standard Kubernetes |
 

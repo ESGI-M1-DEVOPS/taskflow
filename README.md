@@ -19,6 +19,8 @@ Documentation :
 | Auto-scaling | HorizontalPodAutoscaler sur le CPU (2 à 6 pods backend) |
 | Observabilité | Prometheus, Grafana (dashboard des 4 golden signals), cAdvisor, Alertmanager |
 | Logs centralisés | Loki + Grafana Alloy, recherche par service, date et gravité |
+| Revue de code | `main` protégée : PR obligatoire, approbation par un autre membre, CI verte |
+| Secrets | Hors du dépôt : `secrets.yml` sur staging-1 (non versionné), secrets GitHub Actions, secrets Kubernetes ; images lues avec un jeton en lecture seule |
 
 ## Architecture
 
@@ -39,7 +41,7 @@ flowchart LR
 
   ghcr -.pull.-> staging
   ghcr -.pull.-> prod
-  user[Utilisateur] -->|HTTP :80| ingress[Traefik Ingress]
+  user[Utilisateur<br/>via Twingate] -->|HTTP :80| ingress[Traefik Ingress]
   ingress --> front[frontend nginx ×2..4] -->|/api| back[backend Node.js ×2..6] --> db[(PostgreSQL)]
   prom[Prometheus] -.scrape /metrics.-> back
   alloy[Alloy] -.logs.-> loki[(Loki)]
@@ -63,10 +65,15 @@ deploy/
   compose/            staging : compose.yaml (+ compose.build.yaml pour le dev local, profil monitoring)
   helm/taskflow/      production : chart Helm (Deployments, HPA, PDB, StatefulSet, Ingress, ServiceMonitor, dashboard)
   k8s/                générateur de charge pour la démo d'auto-scaling
-infra/ansible/        rôles common, docker, k3s_server, k3s_agent, helm, monitoring, app_staging, app_prod, github_runner
-.github/workflows/    pipeline CI/CD
-scripts/              vérification de disponibilité (démo zero-downtime), installation d'Ansible
-docs/                 contrat d'intégration inter-équipes, scénario de démo
+infra/ansible/
+  playbooks/          site (tout), bootstrap (python3/sudo), deploy-staging, deploy-prod, github-runner
+  roles/              common, docker, k3s_server, k3s_agent, helm, monitoring, app_staging, app_prod, github_runner
+  inventories/        hosts.yml (3 VM) + group_vars (versions figées, registry, NodePorts…)
+.github/
+  workflows/          pipeline CI/CD
+  actionlint.yaml     configuration du lint des workflows (label du runner)
+scripts/              sonde de disponibilité (démo zero-downtime), installation d'Ansible
+docs/                 tutoriel de mise en place, scénario de démo, contrat d'intégration
 ```
 
 ## Démarrage local (Docker Desktop)
@@ -85,16 +92,16 @@ Tests et lint du backend : `cd app/backend && npm ci && npm test && npm run lint
 
 **Le pas-à-pas complet est dans [docs/TUTORIEL.md](docs/TUTORIEL.md)** : VM Proxmox, Twingate, organisation GitHub, Ansible, runner, premier déploiement et dépannage.
 
-| VM Proxmox | Rôle | Ressources |
-|---|---|---|
-| staging-1 | Docker Compose, runner GitHub Actions, poste d'administration Ansible | 2 vCPU, 4 Go |
-| k8s-1 | k3s control-plane + monitoring | 4 vCPU, 6 Go |
-| k8s-2 | k3s worker | 2 vCPU, 4 Go |
+| VM Proxmox (KVM, Debian 13) | IP | Rôle | Ressources |
+|---|---|---|---|
+| staging-1 | 10.1.20.72 | Docker Compose, runner GitHub Actions, poste d'administration Ansible | 4 vCPU, 4 Go, 30 Go |
+| k8s-1 | 10.1.20.73 | k3s control-plane + monitoring | 4 vCPU, 6 Go, 30 Go |
+| k8s-2 | 10.1.20.74 | k3s worker | 2 vCPU, 4 Go, 30 Go |
 
 En résumé :
 1. Renseigner les IP et l'utilisateur SSH dans [hosts.yml](infra/ansible/inventories/proxmox/hosts.yml), puis `image_owner` et `github_repository` dans [group_vars/all.yml](infra/ansible/inventories/proxmox/group_vars/all.yml).
 2. Pousser sur un dépôt **public** de l'organisation GitHub. Les images restent **privées** sur GHCR : créer un jeton GitHub *classic* `read:packages`, que les serveurs utilisent pour les télécharger.
-3. Depuis `staging-1`, lancer `ansible-playbook playbooks/site.yml -e @secrets.yml -K`. Ce playbook idempotent construit toute l'infrastructure et déploie l'application.
+3. Depuis `staging-1`, lancer `ansible-playbook playbooks/site.yml -e @secrets.yml -K`. `-K` ne sert qu'au premier lancement. Ce playbook idempotent construit toute l'infrastructure et déploie l'application, en ~10 min mesurées.
 4. Dans GitHub, créer les secrets, les variables et l'environnement `production` avec approbation. Installer ensuite le runner avec `playbooks/github-runner.yml`. Le runner se connecte à GitHub en sortie : aucun port n'est à ouvrir sur le réseau Proxmox.
 
 Accès, via Twingate :
@@ -114,8 +121,8 @@ flowchart LR
   A[lint<br/>ESLint · npm audit · hadolint<br/>helm lint · compose · ansible] --> C
   B[tests<br/>node:test + supertest] --> C
   C[build<br/>3 images taguées SHA<br/>smoke test compose] -->|main uniquement| D[push GHCR]
-  D --> E[staging<br/>Ansible + compose<br/>vérif. version]
-  E -->|approbation| F[production<br/>Ansible + Helm --atomic<br/>vérif. Ingress]
+  D --> E[staging<br/>refus version obsolète<br/>validation clé SSH<br/>Ansible + compose · vérif. version]
+  E -->|approbation| F[production<br/>refus version obsolète<br/>Ansible + Helm --atomic<br/>smoke test + rollback · vérif. Ingress]
 ```
 
 - **Branche `main` protégée** (ruleset `protection-main`) : toute modification passe par une pull request **approuvée par un autre membre**, avec les 3 checks verts (lint, tests, build). Une nouvelle approbation est exigée après tout nouveau push. Force push et suppression de `main` sont interdits.
@@ -123,6 +130,10 @@ flowchart LR
 - **Pull request** : lint, tests, build et smoke test. Rien n'est publié ni déployé.
 - **Merge sur `main`** : le pipeline complet. Chaque image porte le SHA du commit : une version est identifiable de bout en bout (pipeline, registry, pied de page de l'interface, logs).
 - **Exécution** : les jobs de déploiement tournent sur le runner self-hosted et appellent les **mêmes playbooks Ansible** que ceux utilisés à la main. Il n'y a pas de logique de déploiement cachée dans la CI.
+- **Garde-fous des jobs de déploiement** :
+  - refus si le commit n'est plus le dernier de `main` : une relance d'un ancien run ne peut pas ramener la production en arrière ;
+  - nettoyage et validation de la clé SSH du secret, avec affichage de son empreinte ;
+  - en production, smoke test frontend → backend → BDD après Helm, avec `helm rollback` automatique en cas d'échec.
 
 ## Zero-downtime et auto-scaling
 
@@ -132,10 +143,14 @@ flowchart LR
 | Readiness `/ready` (BDD joignable, pas en arrêt) ≠ liveness `/health` | [app.js](app/backend/src/app.js), [backend.yaml](deploy/helm/taskflow/templates/backend.yaml) |
 | `preStop` + arrêt gracieux sur SIGTERM (fin des requêtes en cours) | [server.js](app/backend/src/server.js) |
 | Replicas répartis sur les 2 nœuds + PodDisruptionBudget : un nœud peut être drainé sans coupure | templates backend et frontend |
-| `helm --atomic` : retour automatique à la version précédente si les pods ne deviennent pas prêts | [app_prod](infra/ansible/roles/app_prod/tasks/main.yml) |
+| `helm --atomic` : retour automatique à la version précédente si les pods ne deviennent pas prêts (délai `helm_wait_timeout`, 5 min par défaut) | [app_prod](infra/ansible/roles/app_prod/tasks/main.yml) |
+| Smoke test post-déploiement frontend → backend → BDD, avec `helm rollback` si échec | [app_prod](infra/ansible/roles/app_prod/tasks/main.yml) |
+| Refus de déployer un commit qui n'est plus le dernier de `main` | [ci-cd.yml](.github/workflows/ci-cd.yml) |
 | Migrations rétrocompatibles (ancienne et nouvelle version tournent ensemble pendant le rolling update) | [db.js](app/backend/src/db.js) |
 | HPA CPU 60 % : backend 2→6 pods, frontend 2→4 pods ; metrics-server inclus dans k3s | templates backend et frontend |
 | La BDD a son propre cycle de version : un déploiement applicatif ne redémarre pas PostgreSQL | `db.imageTag`, [app/db/VERSION](app/db/VERSION) |
+
+**Mesuré en production réelle** : 0 erreur sur 285 puis 349 requêtes pendant deux rolling updates déclenchés par la CI.
 
 Limite assumée, conformément au sujet (pas de haute disponibilité demandée) : PostgreSQL est une instance unique. Sa mise à jour provoque une courte indisponibilité.
 
@@ -149,11 +164,48 @@ Limite assumée, conformément au sujet (pas de haute disponibilité demandée) 
 - **Métriques d'infrastructure** : cAdvisor via le kubelet (CPU et mémoire par conteneur), node-exporter, kube-state-metrics (replicas, redémarrages).
 - **Dashboard** *TaskFlow - Golden signals*, livré avec la chart et chargé automatiquement par Grafana ; c'est le même fichier en staging.
 - **Logs** : JSON sur stdout (backend pino, frontend nginx) avec un champ `level`. Exemple de requête dans Grafana > Explore > Loki : `{namespace="taskflow", component="backend", level="error"}`.
-- **Alertes** : règles par défaut de kube-prometheus-stack (pod en crash loop, nœud indisponible…).
+- **Alertes** : règles par défaut de kube-prometheus-stack (pod en crash loop, nœud indisponible…), visibles sur http://10.1.20.73:30090/alerts.
+
+## Exploitation au quotidien
+
+| Besoin | Comment |
+|---|---|
+| Livrer une modification | Branche, PR, relecture par un autre membre, merge. Le pipeline déploie le staging, puis la production après approbation (*Review deployments*). Détail : [tutoriel, étape 7](docs/TUTORIEL.md) |
+| Déploiement en échec | Corriger, puis relancer le run du **dernier** commit de `main`. Les relances d'anciens runs sont refusées |
+| Revenir en arrière | Recommandé : `git revert` + PR. En urgence, sur k8s-1 : `KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm rollback taskflow -n taskflow` |
+| Lancer un playbook à la main | `ssh admin@10.1.20.72`, `cd ~/taskflow && git pull`, `cd infra/ansible`, `ansible-playbook playbooks/<playbook>.yml -e @secrets.yml` |
+| Commandes Kubernetes | `ssh admin@10.1.20.73` puis `kubectl …` (ou `kubeconfig-prod.yaml` depuis un PC, voir le tutoriel) |
+| Logs d'un service | Grafana > Explore > Loki : `{namespace="taskflow", component="backend"}` ; en direct : `kubectl -n taskflow logs -f deploy/taskflow-backend` |
+| Logs du runner CI | Sur staging-1 : `sudo journalctl -u 'actions.runner.*' -f` |
+| Sonde de disponibilité | `.\scripts\check-availability.ps1 -Url http://10.1.20.73` (Windows) ou `scripts/check-availability.sh` |
+
+| Secret | Où il vit |
+|---|---|
+| `db_password`, `k3s_token`, `grafana_admin_password`, `registry_password` | `~/taskflow/infra/ansible/secrets.yml` sur staging-1 (mode 600, ignoré par git) |
+| `ANSIBLE_SSH_PRIVATE_KEY`, `DB_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`, `GHCR_READ_TOKEN` | Secrets GitHub Actions du dépôt |
+| Clé SSH Ansible | `~/.ssh/ansible` sur staging-1, autorisée pour `admin` sur les 3 VM |
+| Mot de passe BDD et jeton de lecture des images en production | Secrets Kubernetes `taskflow-db` et `taskflow-registry` (namespace `taskflow`) |
+| Mêmes valeurs en staging | `/opt/taskflow/deploy/compose/.env` (mode 600) |
+
+## Versions déployées
+
+Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [group_vars/all.yml](infra/ansible/inventories/proxmox/group_vars/all.yml).
+
+| Composant | Version |
+|---|---|
+| Debian (VM) | 13.8, noyau 6.12 |
+| k3s (Kubernetes) | 📌 v1.37.2+k3s1, avec Traefik v3.7 |
+| Helm | v3.22.1 |
+| kube-prometheus-stack | 📌 chart 93.9.0 : Prometheus v3.16, Grafana 13.3.1, Alertmanager v0.35 |
+| Loki / Grafana Alloy | 📌 charts 7.7.0 / 1.16.0 : Loki 3.6, Alloy v1.22 |
+| Docker (staging) | 29.10.0, Compose 5.8.0 |
+| Ansible | ansible-core 2.22.0 |
+| Runner GitHub Actions | 2.338.2 |
+| Application | Node.js 24, nginx 1.28 (non-root), PostgreSQL 17 |
 
 ## Ce qui a été validé
 
-Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
+### En local (Docker Desktop, cluster k3s v1.31 jetable, conteneurs Debian 13)
 
 | Test | Résultat |
 |---|---|
@@ -185,9 +237,9 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 | Monitoring | 10 pods de monitoring Running, Prometheus collecte les 2 backends, dashboard *TaskFlow - Golden signals* chargé, sources Prometheus / Loki / Alertmanager |
 | Logs centralisés | Loki reçoit les logs, labels `component` (backend, frontend, db…) et `level` (info, warn, error…) |
 | Staging | 6 conteneurs (application + Prometheus, Grafana, cAdvisor) démarrés et sains |
-
 | Déploiement continu de bout en bout (run #7, puis run #9) | Build, images privées sur GHCR, runner self-hosted sur Proxmox, Ansible, staging, puis production après approbation |
-| **Zero-downtime en production réelle**, rolling update déclenché par la CI et sondé toutes les 0,3 s | **285 requêtes pendant la bascule, 0 erreur** ; anciens et nouveaux pods ont répondu en alternance pendant ~6 s |
+| **Zero-downtime en production réelle**, rolling update déclenché par la CI et sondé toutes les 0,3 s | Run #7 : **285 requêtes, 0 erreur**. Run #11 : **349 requêtes, 0 erreur**, anciens et nouveaux pods en alternance pendant 12,6 s |
+| Garde-fou « déploiement obsolète » (run #11, commit `74d39e3`) | Étape passée ; staging puis production déployés en `74d39e3` |
 
 ## Difficultés rencontrées et solutions
 
@@ -221,6 +273,24 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 23/11/2026 : mise à jour de la documentation technique, versions figées
+- Décision : le dépôt reste **public**. En privé, le plan gratuit de GitHub désactiverait la relecture obligatoire des PR et l'approbation de la production. Aucun secret n'est dans le dépôt, et les images restent privées.
+- README :
+  - nouvelles sections « Exploitation au quotidien » (livrer, revenir en arrière, logs, emplacement des secrets) et « Versions déployées » (relevées sur les VM) ;
+  - garde-fous du pipeline et mesures de zero-downtime ;
+  - ressources réelles des VM, arborescence complète ;
+  - tableau des validations remis en ordre.
+- Ansible : versions figées dans `group_vars` (k3s v1.37.2+k3s1, kube-prometheus-stack 93.9.0, Loki 7.7.0, Alloy 1.16.0), soit les versions validées sur Proxmox, pour une reconstruction reproductible. Délai d'attente Helm réglable (`helm_wait_timeout`, 5 min par défaut).
+- Scénario de démo réécrit :
+  - Twingate, et les 3 terminaux de la démo (admin, cluster, PowerShell local) ;
+  - commandes exactes, dont le déploiement cassé avec un rollback en 90 s ;
+  - section « Chiffres à citer ».
+- Tutoriel : ressources réelles, durée mesurée, lancement détaché, consignes sur les runs en attente, l'approbation et le jeton à supprimer après la soutenance.
+
+### 23/11/2026 : production à jour avec le garde-fou actif
+- PR #5 mergée : le run #11 (`74d39e3`) déploie le staging puis la production après approbation. Les deux environnements sont à jour avec `main`.
+- Deuxième mesure de zero-downtime en production : 349 requêtes pendant la bascule, 0 erreur, 12,6 s de cohabitation entre ancienne et nouvelle version.
 
 ### 23/11/2026 : premier déploiement continu complet, refus des versions obsolètes
 - Secret `ANSIBLE_SSH_PRIVATE_KEY` recopié proprement : la relance du run #7 déploie le staging, puis la production après approbation.
