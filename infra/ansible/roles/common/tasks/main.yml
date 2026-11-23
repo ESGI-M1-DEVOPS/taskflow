@@ -1,3 +1,24 @@
+# Garde-fous (vécu sur le projet : conteneurs LXC à 512 Mo au lieu de VM) :
+# on s'arrête tout de suite avec un message clair plutôt qu'au milieu de l'installation de k3s.
+- name: Vérifier que la machine est une VM et pas un conteneur
+  ansible.builtin.assert:
+    that:
+      - (allow_containers | default(false) | bool) or (ansible_facts['virtualization_type'] not in ['lxc', 'openvz', 'docker', 'podman', 'container'])
+    fail_msg: >-
+      {{ inventory_hostname }} est un conteneur ({{ ansible_facts['virtualization_type'] }}) :
+      k3s et Docker demandent une vraie VM (KVM/QEMU sous Proxmox). Recréez la machine en VM.
+    quiet: true
+
+- name: Vérifier la mémoire disponible
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['memtotal_mb'] >= (3500 if 'k3s_server' in group_names else 1800)
+    fail_msg: >-
+      {{ inventory_hostname }} n'a que {{ ansible_facts['memtotal_mb'] }} Mo de RAM :
+      minimum {{ 3500 if 'k3s_server' in group_names else 1800 }} Mo
+      (recommandé : 6 Go pour k8s-1, 4 Go pour les autres).
+    quiet: true
+
 # Utilisateur non-root uniquement : la CI lance Ansible sans pouvoir saisir de mot de passe sudo.
 # Premier lancement manuel avec -K (--ask-become-pass), ensuite plus besoin.
 - name: Sudo sans mot de passe pour l'utilisateur Ansible

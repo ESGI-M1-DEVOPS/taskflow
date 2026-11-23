@@ -49,7 +49,10 @@ flowchart LR
 | k3s control-plane | `k8s-1` | 10.1.20.73 | 4 | 6 Go | 40 Go |
 | k3s worker | `k8s-2` | 10.1.20.74 | 2 | 4 Go | 30 Go |
 
+- **De vraies VM** (*Create VM* dans Proxmox, KVM/QEMU), **pas des conteneurs** (*Create CT* / LXC) : k3s et Docker ne fonctionnent pas correctement dans un LXC. Ansible refuse désormais de continuer sur un conteneur, ou sur une machine qui manque de RAM.
 - Debian 13 avec le **serveur SSH** et le compte sudoer **`admin`**. Si Python manque, Ansible l'installe lui-même.
+  - Astuce installateur Debian : en laissant le **mot de passe root vide**, l'installateur installe `sudo` et ajoute automatiquement le premier utilisateur (`admin`) au groupe sudo.
+  - Dans *Software selection*, cocher **SSH server** et **standard system utilities** ; pas d'environnement de bureau.
 - **IP fixes** : elles sont écrites dans l'inventaire Ansible.
 - **Accès Internet** depuis les VM : apt, get.k3s.io, github.com et ghcr.io doivent être joignables.
 
@@ -381,6 +384,9 @@ C'est le circuit à suivre pour **toute** modification.
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
+| `swapoff: Not superuser.` en root, ou `assert` « est un conteneur (lxc) » | la machine est un conteneur LXC Proxmox, pas une VM | recréer la machine en VM (*Create VM*), voir l'étape 1 |
+| `assert` « n'a que … Mo de RAM » | VM trop petite | augmenter la RAM dans Proxmox (*Hardware > Memory*) puis redémarrer la VM |
+| `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED` en SSH depuis Windows | VM recréée à la même IP : nouvelle clé d'hôte | `ssh-keygen -R <IP>` puis se reconnecter |
 | `ansible all ...` : `Permission denied (publickey)` | clé non copiée sur une VM | refaire `ssh-copy-id -i ~/.ssh/ansible.pub admin@<IP>` |
 | `Missing sudo password` | premier lancement sans `-K` | relancer avec `-K` |
 | Job CI en échec : `sudo: a password is required` | `site.yml` n'a jamais été mené jusqu'au rôle `common` | relancer `site.yml -e @secrets.yml -K` depuis staging-1 |
