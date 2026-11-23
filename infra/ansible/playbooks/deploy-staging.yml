@@ -1,0 +1,7 @@
+# Met à jour l'application en staging (appelé par la CI) :
+#   ansible-playbook playbooks/deploy-staging.yml -e @secrets.yml -e image_tag=<sha>
+- name: Déployer TaskFlow en staging (docker compose)
+  hosts: staging
+  become: true
+  roles:
+    - app_staging

@@ -1,0 +1,41 @@
+# Construit TOUTE l'infrastructure à partir de VM vierges, puis déploie l'application.
+#   ansible-playbook playbooks/site.yml -e @secrets.yml
+- name: Prérequis (python3, sudo)
+  ansible.builtin.import_playbook: bootstrap.yml
+
+- name: Socle commun (paquets, swap, fuseau horaire)
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Staging - Docker Engine + compose
+  hosts: staging
+  become: true
+  roles:
+    - docker
+
+- name: Production - k3s control-plane + Helm
+  hosts: k3s_server
+  become: true
+  roles:
+    - k3s_server
+    - helm
+
+- name: Production - k3s worker
+  hosts: k3s_agents
+  become: true
+  roles:
+    - k3s_agent
+
+- name: Production - observabilité (Prometheus, Grafana, Loki)
+  hosts: k3s_server
+  become: true
+  roles:
+    - monitoring
+
+- name: Déploiement staging
+  ansible.builtin.import_playbook: deploy-staging.yml
+
+- name: Déploiement production
+  ansible.builtin.import_playbook: deploy-prod.yml

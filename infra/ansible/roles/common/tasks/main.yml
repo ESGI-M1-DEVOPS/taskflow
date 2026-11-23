@@ -1,0 +1,44 @@
+# Utilisateur non-root uniquement : la CI lance Ansible sans pouvoir saisir de mot de passe sudo.
+# Premier lancement manuel avec -K (--ask-become-pass), ensuite plus besoin.
+- name: Sudo sans mot de passe pour l'utilisateur Ansible
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-{{ ansible_user }}"
+    content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    mode: "0440"
+    validate: visudo -cf %s
+  when: ansible_user != 'root'
+
+- name: Mettre à jour le cache APT
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Installer les paquets de base
+  ansible.builtin.apt:
+    name:
+      - acl            # nécessaire à Ansible pour become_user vers un utilisateur non-root
+      - ca-certificates
+      - curl
+      - git
+      - gnupg
+      - jq
+      - openssl
+      - python3-debian # requis par le module deb822_repository (dépôt Docker)
+      - python3-venv
+      - python3-yaml   # requis par le module kubernetes.core.helm
+    state: present
+
+- name: Fuseau horaire Europe/Paris
+  community.general.timezone:
+    name: Europe/Paris
+
+- name: Désactiver le swap (recommandé pour Kubernetes)
+  ansible.builtin.command: swapoff -a
+  when: ansible_facts['swaptotal_mb'] > 0
+  changed_when: true
+
+- name: Retirer le swap de /etc/fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s.*)$'
+    replace: '# \1'

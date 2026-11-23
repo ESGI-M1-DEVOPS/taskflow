@@ -1,0 +1,91 @@
+- name: Utilisateur dédié au runner
+  ansible.builtin.user:
+    name: github-runner
+    groups: docker
+    append: true
+    shell: /bin/bash
+    create_home: true
+
+- name: Dossier du runner
+  ansible.builtin.file:
+    path: /home/github-runner/actions-runner
+    state: directory
+    owner: github-runner
+    group: github-runner
+    mode: "0755"
+
+- name: Récupérer la dernière version du runner
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/actions/runner/releases/latest
+    return_content: true
+  register: runner_release
+
+- name: Télécharger et extraire le runner
+  ansible.builtin.unarchive:
+    src: "https://github.com/actions/runner/releases/download/{{ runner_release.json.tag_name }}/actions-runner-linux-x64-{{ runner_release.json.tag_name | regex_replace('^v', '') }}.tar.gz"
+    dest: /home/github-runner/actions-runner
+    remote_src: true
+    owner: github-runner
+    group: github-runner
+    creates: /home/github-runner/actions-runner/config.sh
+
+# Le runner (.NET) a besoin d'ICU, Kerberos et zlib : on les installe nous-mêmes,
+# car le script officiel ne connaît pas toujours les noms de paquets des OS récents.
+- name: Installer les dépendances système du runner
+  ansible.builtin.apt:
+    name:
+      - libicu-dev
+      - libkrb5-3
+      - zlib1g
+    state: present
+
+- name: Script de dépendances officiel (complément, non bloquant)
+  ansible.builtin.command: ./bin/installdependencies.sh
+  args:
+    chdir: /home/github-runner/actions-runner
+    creates: /home/github-runner/actions-runner/.runner
+  register: runner_deps
+  failed_when: false
+  changed_when: runner_deps.rc == 0
+
+- name: Enregistrer le runner auprès du dépôt GitHub
+  ansible.builtin.command: >-
+    ./config.sh --unattended --replace
+    --url https://github.com/{{ github_repository }}
+    --token {{ github_runner_token }}
+    --name {{ inventory_hostname }}
+    --labels proxmox
+  args:
+    chdir: /home/github-runner/actions-runner
+    creates: /home/github-runner/actions-runner/.runner
+  become_user: github-runner
+  no_log: true
+
+- name: Installer le runner comme service systemd
+  ansible.builtin.command: ./svc.sh install github-runner
+  args:
+    chdir: /home/github-runner/actions-runner
+    creates: /home/github-runner/actions-runner/.service
+
+- name: Démarrer le service du runner
+  ansible.builtin.command: ./svc.sh start
+  args:
+    chdir: /home/github-runner/actions-runner
+  changed_when: false
+
+# Les jobs de déploiement lancent Ansible depuis cette VM.
+- name: Installer Ansible dans un environnement virtuel
+  ansible.builtin.pip:
+    name: ansible-core>=2.17
+    virtualenv: /opt/ansible
+    virtualenv_command: python3 -m venv
+
+- name: Rendre les commandes Ansible disponibles
+  ansible.builtin.file:
+    src: "/opt/ansible/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+  loop:
+    - ansible
+    - ansible-playbook
+    - ansible-galaxy

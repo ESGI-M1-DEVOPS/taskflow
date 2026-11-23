@@ -1,0 +1,16 @@
+# Surcharge pour le développement local : construit les images depuis les sources.
+#   docker compose -f compose.yaml -f compose.build.yaml up --build
+services:
+  db:
+    build:
+      context: ../../app/db
+  backend:
+    build:
+      context: ../../app/backend
+      args:
+        APP_VERSION: local
+  frontend:
+    build:
+      context: ../../app/frontend
+      args:
+        APP_VERSION: local

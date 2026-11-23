@@ -1,0 +1,8 @@
+# Met à jour l'application en production (appelé par la CI) :
+#   ansible-playbook playbooks/deploy-prod.yml -e @secrets.yml -e image_tag=<sha>
+# Rolling update sans coupure ; rollback automatique (helm --atomic) si les pods ne deviennent pas prêts.
+- name: Déployer TaskFlow en production (Helm sur k3s)
+  hosts: k3s_server
+  become: true
+  roles:
+    - app_prod

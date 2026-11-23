@@ -1,0 +1,13 @@
+# Installe un runner GitHub Actions self-hosted sur la VM de staging.
+# Il exécute les jobs de déploiement depuis le réseau Proxmox (connexion sortante uniquement,
+# aucun port à ouvrir vers Internet).
+#   ansible-playbook playbooks/github-runner.yml -e @secrets.yml -e github_runner_token=<jeton>
+# Jeton : GitHub > Settings > Actions > Runners > New self-hosted runner.
+- name: Prérequis (python3, sudo)
+  ansible.builtin.import_playbook: bootstrap.yml
+
+- name: Runner GitHub Actions self-hosted
+  hosts: staging
+  become: true
+  roles:
+    - github_runner

@@ -1,0 +1,14 @@
+node_modules/
+npm-debug.log*
+
+# Secrets et fichiers générés
+.env
+infra/ansible/secrets.yml
+infra/ansible/kubeconfig-prod.yaml
+*.retry
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+# Démo auto-scaling : génère de la charge CPU sur le backend pour déclencher le HPA.
+#   kubectl -n taskflow apply -f deploy/k8s/load-generator.yaml
+#   kubectl -n taskflow get hpa -w          # les replicas montent (max 6)
+#   kubectl -n taskflow delete -f deploy/k8s/load-generator.yaml   # redescente après ~1 min
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  labels:
+    app: load-generator
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+        - name: load
+          image: busybox:1.37
+          command: ["/bin/sh", "-c"]
+          args:
+            - while true; do wget -q -O /dev/null "http://taskflow-backend:3000/api/debug/cpu?ms=100"; done
+          resources:
+            requests: { cpu: 10m, memory: 8Mi }
+            limits: { cpu: 100m, memory: 16Mi }

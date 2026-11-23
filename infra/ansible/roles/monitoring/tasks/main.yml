@@ -1,0 +1,45 @@
+- name: Ajouter les dépôts Helm de monitoring
+  kubernetes.core.helm_repository:
+    name: "{{ item.name }}"
+    repo_url: "{{ item.url }}"
+  loop:
+    - { name: prometheus-community, url: "https://prometheus-community.github.io/helm-charts" }
+    - { name: grafana, url: "https://grafana.github.io/helm-charts" }
+
+# Prometheus + Grafana + Alertmanager + node-exporter + kube-state-metrics.
+# Les métriques cAdvisor (CPU/RAM par conteneur) sont collectées via le kubelet.
+- name: Installer kube-prometheus-stack
+  kubernetes.core.helm:
+    name: kps
+    chart_ref: prometheus-community/kube-prometheus-stack
+    chart_version: "{{ kps_chart_version | default(omit, true) }}"
+    release_namespace: "{{ monitoring_namespace }}"
+    create_namespace: true
+    update_repo_cache: true
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    wait: true
+    wait_timeout: 15m0s
+    values: "{{ lookup('ansible.builtin.template', 'kps-values.yml.j2') | from_yaml }}"
+
+- name: Installer Loki (stockage des logs)
+  kubernetes.core.helm:
+    name: loki
+    chart_ref: grafana/loki
+    chart_version: "{{ loki_chart_version | default(omit, true) }}"
+    release_namespace: "{{ monitoring_namespace }}"
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    wait: true
+    wait_timeout: 10m0s
+    values: "{{ lookup('ansible.builtin.template', 'loki-values.yml.j2') | from_yaml }}"
+  when: loki_enabled
+
+- name: Installer Grafana Alloy (collecte des logs des pods vers Loki)
+  kubernetes.core.helm:
+    name: alloy
+    chart_ref: grafana/alloy
+    chart_version: "{{ alloy_chart_version | default(omit, true) }}"
+    release_namespace: "{{ monitoring_namespace }}"
+    kubeconfig: "{{ k3s_kubeconfig }}"
+    wait: true
+    values: "{{ lookup('ansible.builtin.template', 'alloy-values.yml.j2') | from_yaml }}"
+  when: loki_enabled

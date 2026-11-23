@@ -1,0 +1,47 @@
+- name: Dossier de déploiement
+  ansible.builtin.file:
+    path: "{{ staging_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Copier les fichiers de déploiement (compose, monitoring, dashboard)
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/deploy/"
+    dest: "{{ staging_dir }}/deploy/"
+    mode: "0644"
+    directory_mode: "0755"
+
+- name: Générer le fichier .env (version à déployer + secrets)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ staging_dir }}/deploy/compose/.env"
+    mode: "0600"
+
+- name: Télécharger les images de la version demandée
+  ansible.builtin.command: docker compose pull --quiet
+  args:
+    chdir: "{{ staging_dir }}/deploy/compose"
+  changed_when: false
+
+- name: Démarrer / mettre à jour la stack
+  ansible.builtin.command: docker compose up -d --remove-orphans --wait --wait-timeout 180
+  args:
+    chdir: "{{ staging_dir }}/deploy/compose"
+  register: compose_up
+  changed_when: "'Recreate' in compose_up.stderr or 'Creat' in compose_up.stderr"
+
+- name: Vérifier que l'application répond avec la bonne version
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ staging_http_port }}/api/version"
+    return_content: true
+  register: staging_version
+  # Avec "latest", l'image porte le SHA de son commit : on ne compare la version que pour un tag explicite.
+  until: >-
+    staging_version.status | default(0) == 200 and
+    (image_tag == 'latest' or (staging_version.json | default({})).version | default('') == image_tag)
+  retries: 12
+  delay: 5
+
+- name: Version en staging
+  ansible.builtin.debug:
+    msg: "{{ staging_version.json }}"

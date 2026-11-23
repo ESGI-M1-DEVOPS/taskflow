@@ -1,0 +1,90 @@
+# Environnement de STAGING : stack TaskFlow à partir des images publiées par la CI.
+#
+#   cp .env.example .env              # puis renseigner IMAGE_OWNER et DB_PASSWORD
+#   docker compose pull && docker compose up -d
+#   docker compose --profile monitoring up -d   # + Prometheus / Grafana / cAdvisor
+#
+# En local, pour construire les images depuis les sources :
+#   docker compose -f compose.yaml -f compose.build.yaml up --build
+name: taskflow
+
+services:
+  db:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER:?IMAGE_OWNER requis}/taskflow-db:${DB_IMAGE_TAG:-1.0.0}
+    environment:
+      POSTGRES_DB: taskflow
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requis}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER}/taskflow-backend:${IMAGE_TAG:-latest}
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: taskflow
+      PGUSER: taskflow
+      PGPASSWORD: ${DB_PASSWORD}
+      LOG_LEVEL: info
+      DEBUG_ENDPOINTS: "true"
+    # Laisse au backend le temps de finir ses requêtes après SIGTERM (arrêt gracieux).
+    stop_grace_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER}/taskflow-frontend:${IMAGE_TAG:-latest}
+    environment:
+      BACKEND_URL: http://backend:3000
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Observabilité (profil optionnel) ---
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: [monitoring]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Même dashboard que celui déployé en production par la chart Helm.
+      - ../helm/taskflow/files:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: [monitoring]
+    privileged: true
+    devices:
+      - /dev/kmsg
+    environment:
+      DOCKER_API_VERSION: "1.44"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    restart: unless-stopped
+
+volumes:
+  db-data:

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskFlow</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>TaskFlow</h1>
+      <p class="subtitle">Les tâches de l'équipe, déployées en continu.</p>
+    </header>
+
+    <form id="task-form" autocomplete="off">
+      <input id="task-title" name="title" type="text" placeholder="Nouvelle tâche…" maxlength="200" required>
+      <button type="submit">Ajouter</button>
+    </form>
+
+    <p id="error" class="error" hidden></p>
+
+    <ul id="task-list" class="tasks"></ul>
+    <p id="empty" class="empty" hidden>Aucune tâche pour l'instant.</p>
+  </main>
+
+  <footer id="versions" class="versions">chargement des versions…</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

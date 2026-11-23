@@ -1,0 +1,52 @@
+grafana:
+  adminPassword: "{{ grafana_admin_password }}"
+  service:
+    type: NodePort
+    nodePort: {{ grafana_nodeport }}
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL      # charge les dashboards livrés par les applications (ConfigMap)
+{% if loki_enabled %}
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki-gateway.{{ monitoring_namespace }}.svc.cluster.local
+{% endif %}
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: {{ prometheus_nodeport }}
+  prometheusSpec:
+    # Prendre en compte les ServiceMonitor/PodMonitor/règles de TOUTES les applications
+    # (y compris celles des autres équipes), pas seulement ceux de cette release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 7d
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+
+# Composants du control-plane non exposés par k3s : désactivés pour éviter des cibles en erreur.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false

@@ -1,0 +1,18 @@
+# Prérequis d'Ansible sur une VM fraîchement installée : python3 (exécution des modules)
+# et sudo (élévation de privilèges, y compris vers des utilisateurs non-root).
+# Un Debian installé avec un mot de passe root n'a pas sudo par défaut.
+# Module "raw" : fonctionne sans Python sur la cible.
+- name: Prérequis Ansible (python3, sudo)
+  hosts: all
+  gather_facts: false
+  become: "{{ ansible_user != 'root' }}"
+  tasks:
+    - name: Installer python3 et sudo s'ils sont absents
+      ansible.builtin.raw: |
+        if command -v python3 >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+          echo "deja-present"
+        else
+          apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 sudo
+        fi
+      register: bootstrap
+      changed_when: "'deja-present' not in bootstrap.stdout"

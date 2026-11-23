@@ -1,0 +1,97 @@
+{{- $name := printf "%s-db" (include "taskflow.fullname" .) -}}
+{{- $sel := dict "ctx" . "component" "db" -}}
+{{- if not .Values.db.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "taskflow.dbSecretName" . }}
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ required "db.password est obligatoire (ou db.existingSecret)" .Values.db.password | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  selector:
+    {{- include "taskflow.selector" $sel | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# PostgreSQL : 1 seule instance (pas de HA demandée), données sur volume persistant.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "taskflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "taskflow.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "taskflow.selector" $sel | nindent 8 }}
+    spec:
+      {{- with .Values.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: {{ include "taskflow.image" (dict "ctx" . "component" "db" "tag" .Values.db.imageTag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.db.name | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.db.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "taskflow.dbSecretName" . }}
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.db.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.db.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.db.storage }}

@@ -1,0 +1,259 @@
+# Pipeline CI/CD de TaskFlow
+#   PR         : lint + tests + build + smoke test (rien n'est publié)
+#   push main  : idem + push des images GHCR + déploiement staging (auto)
+#                + déploiement production (après validation manuelle sur l'environnement "production")
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  NODE_VERSION: "24"
+
+jobs:
+  lint:
+    name: Lint & analyse statique
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Dépendances backend
+        working-directory: app/backend
+        run: npm ci
+
+      - name: ESLint
+        working-directory: app/backend
+        run: npm run lint
+
+      - name: Audit des dépendances (vulnérabilités hautes et critiques)
+        working-directory: app/backend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Hadolint (bonnes pratiques Dockerfile)
+        run: |
+          for f in app/*/Dockerfile; do
+            echo "::group::$f"
+            docker run --rm -i hadolint/hadolint:v2.12.0 < "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Helm lint
+        run: helm lint deploy/helm/taskflow --set image.owner=ci --set db.password=ci
+
+      - name: Validation docker compose
+        working-directory: deploy/compose
+        env:
+          IMAGE_OWNER: ci
+          DB_PASSWORD: ci
+        run: docker compose -f compose.yaml config --quiet
+
+      - name: Vérification de syntaxe Ansible
+        working-directory: infra/ansible
+        run: |
+          pipx install ansible-core
+          ansible-galaxy collection install -r requirements.yml
+          ansible-playbook --syntax-check playbooks/site.yml playbooks/github-runner.yml
+
+  test:
+    name: Tests automatisés
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Dépendances backend
+        working-directory: app/backend
+        run: npm ci
+
+      - name: Tests unitaires et d'API
+        working-directory: app/backend
+        run: npm test
+
+  build:
+    name: Build, smoke test & publication des images
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      owner: ${{ steps.vars.outputs.owner }}
+      tag: ${{ steps.vars.outputs.tag }}
+      db_tag: ${{ steps.vars.outputs.db_tag }}
+    env:
+      SMOKE_DB_PASSWORD: smoke-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Calcul des tags
+        id: vars
+        run: |
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "db_tag=$(tr -d '[:space:]' < app/db/VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Build des images (tag = SHA du commit)
+        env:
+          PREFIX: ${{ env.REGISTRY }}/${{ steps.vars.outputs.owner }}/taskflow
+          TAG: ${{ steps.vars.outputs.tag }}
+          DB_TAG: ${{ steps.vars.outputs.db_tag }}
+        run: |
+          docker build --build-arg APP_VERSION="$TAG" -t "$PREFIX-backend:$TAG" -t "$PREFIX-backend:latest" app/backend
+          docker build --build-arg APP_VERSION="$TAG" -t "$PREFIX-frontend:$TAG" -t "$PREFIX-frontend:latest" app/frontend
+          docker build -t "$PREFIX-db:$DB_TAG" -t "$PREFIX-db:latest" app/db
+
+      - name: Smoke test de la stack complète (docker compose)
+        working-directory: deploy/compose
+        env:
+          IMAGE_OWNER: ${{ steps.vars.outputs.owner }}
+          IMAGE_TAG: ${{ steps.vars.outputs.tag }}
+          DB_IMAGE_TAG: ${{ steps.vars.outputs.db_tag }}
+          DB_PASSWORD: ${{ env.SMOKE_DB_PASSWORD }}
+        run: |
+          docker compose -f compose.yaml up -d --wait --wait-timeout 120
+          curl -fsS http://localhost:8080/api/version | tee /dev/stderr | grep -q "\"$IMAGE_TAG\""
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{"title":"smoke test"}' http://localhost:8080/api/tasks
+          curl -fsS http://localhost:8080/api/tasks | grep -q "smoke test"
+          curl -fsS http://localhost:8080/ | grep -q "TaskFlow"
+
+      - name: Logs de la stack en cas d'échec
+        if: failure()
+        working-directory: deploy/compose
+        env:
+          IMAGE_OWNER: ${{ steps.vars.outputs.owner }}
+          DB_PASSWORD: ${{ env.SMOKE_DB_PASSWORD }}
+        run: docker compose -f compose.yaml logs
+
+      - name: Connexion à GitHub Container Registry
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publication des images
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          PREFIX: ${{ env.REGISTRY }}/${{ steps.vars.outputs.owner }}/taskflow
+        run: |
+          for component in backend frontend db; do
+            docker push --all-tags "$PREFIX-$component"
+          done
+
+  deploy-staging:
+    name: Déploiement staging
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, proxmox]
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la clé SSH et les secrets Ansible
+        env:
+          SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          GRAFANA_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
+          jq -n --arg db "$DB_PASSWORD" --arg gf "$GRAFANA_PASSWORD" \
+            '{db_password: $db, grafana_admin_password: $gf}' > "$RUNNER_TEMP/secrets.json"
+          chmod 600 "$RUNNER_TEMP/secrets.json"
+
+      - name: Collections Ansible
+        working-directory: infra/ansible
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Ansible - mise à jour du staging
+        working-directory: infra/ansible
+        run: >-
+          ansible-playbook playbooks/deploy-staging.yml
+          --private-key "$RUNNER_TEMP/ansible_key"
+          -e @"$RUNNER_TEMP/secrets.json"
+          -e image_owner=${{ needs.build.outputs.owner }}
+          -e image_tag=${{ needs.build.outputs.tag }}
+          -e db_image_tag=${{ needs.build.outputs.db_tag }}
+
+      - name: Nettoyage des secrets
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/secrets.json"
+
+  deploy-production:
+    name: Déploiement production
+    needs: [build, deploy-staging]
+    runs-on: [self-hosted, proxmox]
+    # Règle de protection "Required reviewers" sur cet environnement => déploiement semi-automatique.
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la clé SSH et les secrets Ansible
+        env:
+          SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
+          jq -n --arg db "$DB_PASSWORD" '{db_password: $db}' > "$RUNNER_TEMP/secrets.json"
+          chmod 600 "$RUNNER_TEMP/secrets.json"
+
+      - name: Collections Ansible
+        working-directory: infra/ansible
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Ansible - rolling update Helm (rollback auto si échec)
+        working-directory: infra/ansible
+        run: >-
+          ansible-playbook playbooks/deploy-prod.yml
+          --private-key "$RUNNER_TEMP/ansible_key"
+          -e @"$RUNNER_TEMP/secrets.json"
+          -e image_owner=${{ needs.build.outputs.owner }}
+          -e image_tag=${{ needs.build.outputs.tag }}
+          -e db_image_tag=${{ needs.build.outputs.db_tag }}
+
+      - name: Vérification depuis l'Ingress
+        if: vars.PROD_URL != ''
+        env:
+          PROD_URL: ${{ vars.PROD_URL }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS "$PROD_URL/api/version" | grep -q "\"$TAG\""; then
+              echo "Production servie en version $TAG"; exit 0
+            fi
+            sleep 5
+          done
+          echo "La production ne sert pas la version $TAG"; exit 1
+
+      - name: Nettoyage des secrets
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/secrets.json"

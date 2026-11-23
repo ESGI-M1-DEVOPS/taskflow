@@ -1,0 +1,75 @@
+# Valeurs par défaut de la chart TaskFlow.
+# Seuls image.owner et db.password sont obligatoires pour déployer :
+#   helm upgrade --install taskflow ./taskflow -n taskflow --create-namespace \
+#     --set image.owner=<compte> --set image.tag=<sha> --set db.password=<secret>
+
+image:
+  registry: ghcr.io
+  owner: ""            # compte/organisation de la registry (en minuscules)
+  tag: latest          # tag commun frontend + backend (SHA du commit en CD)
+  pullPolicy: IfNotPresent
+pullSecrets: []        # ex: [{name: ghcr-pull}] si les images sont privées
+clusterDomain: cluster.local
+
+backend:
+  port: 3000
+  replicas: 2          # ignoré si l'autoscaling est activé (le HPA pilote)
+  logLevel: info
+  debugEndpoints: true # endpoints de démo (/api/debug/*) : prototype uniquement
+  shutdownDelayMs: 3000
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 60
+
+frontend:
+  port: 8080
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+
+# Stratégie de mise à jour : on ajoute un pod neuf avant d'en retirer un ancien,
+# et jamais de pod indisponible => zero-downtime.
+rollingUpdate:
+  maxSurge: 1
+  maxUnavailable: 0
+
+db:
+  # La BDD a son propre cycle de version (app/db/VERSION) : un déploiement applicatif
+  # ne redémarre pas PostgreSQL.
+  imageTag: "1.0.0"
+  name: taskflow
+  user: taskflow
+  password: ""          # obligatoire (sauf si existingSecret)
+  existingSecret: ""    # secret contenant la clé "password"
+  storage: 1Gi
+  storageClass: ""      # vide = classe par défaut (local-path sur k3s)
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
+
+ingress:
+  enabled: true
+  className: ""         # vide = classe par défaut du cluster (Traefik sur k3s)
+  host: ""              # vide = toutes les requêtes ; à renseigner si plusieurs applis
+  annotations: {}
+
+monitoring:
+  serviceMonitor:
+    enabled: true       # créé uniquement si le CRD Prometheus Operator existe
+    interval: 15s
+    labels: {}
+  grafanaDashboard:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"
