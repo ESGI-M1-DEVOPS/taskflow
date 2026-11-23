@@ -177,6 +177,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Une relance d'un ancien run (ou une approbation tardive) ne doit jamais faire
+      # revenir l'environnement à une version antérieure (vécu : run #7 relancé après le run #9).
+      # Pour revenir en arrière volontairement : git revert + PR, ou helm rollback.
+      - name: Refuser un déploiement obsolète
+        run: |
+          git fetch --quiet --depth=1 origin main
+          HEAD_MAIN=$(git rev-parse FETCH_HEAD)
+          if [ "$HEAD_MAIN" != "$GITHUB_SHA" ]; then
+            echo "::error::Ce run déploierait ${GITHUB_SHA::7} alors que main est à ${HEAD_MAIN::7} : déploiement d'une version obsolète refusé. Relancer plutôt le run du dernier commit de main."
+            exit 1
+          fi
+          echo "OK : ${GITHUB_SHA::7} est bien le dernier commit de main."
+
       - name: Préparer la clé SSH et les secrets Ansible
         env:
           SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
@@ -224,6 +237,19 @@ jobs:
       url: ${{ vars.PROD_URL }}
     steps:
       - uses: actions/checkout@v4
+
+      # Une relance d'un ancien run (ou une approbation tardive) ne doit jamais faire
+      # revenir l'environnement à une version antérieure (vécu : run #7 relancé après le run #9).
+      # Pour revenir en arrière volontairement : git revert + PR, ou helm rollback.
+      - name: Refuser un déploiement obsolète
+        run: |
+          git fetch --quiet --depth=1 origin main
+          HEAD_MAIN=$(git rev-parse FETCH_HEAD)
+          if [ "$HEAD_MAIN" != "$GITHUB_SHA" ]; then
+            echo "::error::Ce run déploierait ${GITHUB_SHA::7} alors que main est à ${HEAD_MAIN::7} : déploiement d'une version obsolète refusé. Relancer plutôt le run du dernier commit de main."
+            exit 1
+          fi
+          echo "OK : ${GITHUB_SHA::7} est bien le dernier commit de main."
 
       - name: Préparer la clé SSH et les secrets Ansible
         env:
