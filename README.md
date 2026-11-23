@@ -173,7 +173,20 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 | Workflow GitHub Actions passé à `actionlint` (+ shellcheck) | 0 problème |
 | Jeton de lecture GHCR (compte Poliaqt, droit `read:packages` seul) | 3 images privées lisibles avec le jeton (API registry et `docker login`), refusées sans jeton |
 
-Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s multi-nœuds, kube-prometheus-stack, Loki/Alloy), le runner GitHub et le pipeline sur GitHub.
+### Sur l'infrastructure Proxmox (23/11/2026)
+
+| Test | Résultat |
+|---|---|
+| `site.yml` complet sur 3 VM Debian 13 vierges (KVM) | `failed=0` sur les 3 VM, en ~10 min |
+| Cluster k3s v1.37.2 | `k8s-1` (control-plane) et `k8s-2` en Ready |
+| Production | 2 backend + 2 frontend **répartis sur les 2 nœuds**, PostgreSQL, 2 HPA avec métriques CPU, Ingress Traefik sur les 2 nœuds |
+| Images privées | Téléchargées via le secret `docker-registry` en production et `docker login` en staging |
+| Application | Production http://10.1.20.73 et staging http://10.1.20.72:8080 répondent ; création d'une tâche en production OK |
+| Monitoring | 10 pods de monitoring Running, Prometheus collecte les 2 backends, dashboard *TaskFlow - Golden signals* chargé, sources Prometheus / Loki / Alertmanager |
+| Logs centralisés | Loki reçoit les logs, labels `component` (backend, frontend, db…) et `level` (info, warn, error…) |
+| Staging | 6 conteneurs (application + Prometheus, Grafana, cAdvisor) démarrés et sains |
+
+Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeline (étapes 6 et 7 du tutoriel).
 
 ## Difficultés rencontrées et solutions
 
@@ -183,6 +196,7 @@ Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s mul
 | Erreurs 502 après la recréation du backend en docker compose | nginx résout le nom du backend une seule fois, au démarrage, et garde l'ancienne IP | `resolver` dynamique (DNS détecté par l'image nginx) et variable dans `proxy_pass` ; FQDN du Service en Kubernetes |
 | Une mise à jour casse `/api` alors que Helm la déclare réussie | Le frontend est « prêt » (sa sonde ne teste pas le backend), donc `--atomic` ne voit rien | Smoke test post-déploiement frontend → backend → BDD dans Ansible, avec `helm rollback` automatique en cas d'échec |
 | Arrêt gracieux interrompu (SIGKILL au bout de 3 s) en compose | Délai d'arrêt Docker trop court | `stop_grace_period: 20s` explicite |
+| Premier `site.yml` en échec : `swapoff: Not superuser.` alors qu'on est root | Les « VM » Proxmox étaient des **conteneurs LXC** à 1 CPU / 512 Mo : pas assez de droits noyau ni de RAM pour k3s | Recréation en vraies VM KVM ; garde-fous Ansible en tête du rôle `common` (refus des conteneurs, RAM minimale) pour échouer tout de suite avec un message clair |
 | Pas de métriques par conteneur avec cAdvisor sous Docker Desktop | cAdvisor ne voit pas les conteneurs de Docker Desktop | En production, on utilise le cAdvisor intégré au kubelet (k3s) ; sur la VM staging, le daemon Docker accepte les anciens clients API |
 
 ## Documentation
@@ -203,6 +217,16 @@ Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s mul
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 23/11/2026 : fond de page du frontend (PR #2)
+- Frontend : logo `claude-logo.svg` en arrière-plan fixe, centré et atténué par un voile translucide pour garder le contenu lisible (`style.css`). PR #2 de Zerda, mergée dans `main`.
+
+### 23/11/2026 : premier lancement sur Proxmox, passage en VM
+- Étape 4 réalisée sur staging-1 (Ansible, clé SSH copiée sur les 3 machines, `secrets.yml`). Premier `site.yml` en échec dès le rôle `common` : les machines étaient des conteneurs LXC (1 CPU, 512 Mo).
+- Décision : recréer les 3 machines en VM KVM (staging 2 CPU/4 Go, k8s-1 4 CPU/6 Go, k8s-2 2 CPU/4 Go), conformément au sujet.
+- Sur les VM KVM : étape 4 refaite, puis **`site.yml` réussi du premier coup** (`failed=0`, ~10 min). Résultats détaillés dans « Ce qui a été validé ».
+- Rôle `common` : garde-fous en début de rôle (refus des conteneurs sauf `allow_containers: true`, RAM minimale 3,5 Go sur le control-plane et 1,8 Go ailleurs).
+- Tutoriel : création de VM (pas de CT), astuces de l'installateur Debian, nouveaux cas de dépannage (LXC, RAM, clé d'hôte SSH changée).
 
 ### 23/11/2026 : images privées sur GHCR
 - Les images restent privées. Les serveurs les lisent avec un jeton GitHub *classic* limité à `read:packages` (variables `registry_username` / `registry_password`, secret GitHub `GHCR_READ_TOKEN`).
