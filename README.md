@@ -197,6 +197,8 @@ Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeli
 | Une mise à jour casse `/api` alors que Helm la déclare réussie | Le frontend est « prêt » (sa sonde ne teste pas le backend), donc `--atomic` ne voit rien | Smoke test post-déploiement frontend → backend → BDD dans Ansible, avec `helm rollback` automatique en cas d'échec |
 | Arrêt gracieux interrompu (SIGKILL au bout de 3 s) en compose | Délai d'arrêt Docker trop court | `stop_grace_period: 20s` explicite |
 | Premier `site.yml` en échec : `swapoff: Not superuser.` alors qu'on est root | Les « VM » Proxmox étaient des **conteneurs LXC** à 1 CPU / 512 Mo : pas assez de droits noyau ni de RAM pour k3s | Recréation en vraies VM KVM ; garde-fous Ansible en tête du rôle `common` (refus des conteneurs, RAM minimale) pour échouer tout de suite avec un message clair |
+| Déploiement CI en échec, Ansible `UNREACHABLE`, alors que la clé fonctionne en manuel | Secret `ANSIBLE_SSH_PRIVATE_KEY` abîmé au copier-coller : le job ne présentait aucune clé valide (vu dans le journal sshd) | Copie par `Set-Clipboard` ; le workflow nettoie et valide la clé avec `ssh-keygen` et affiche son empreinte |
+| Premier job de déploiement en échec (`Collections Ansible`) juste après l'installation du runner | Le rôle `github_runner` démarrait le service **avant** d'installer Ansible : le runner a pris un job en attente dans la seconde | Installation d'Ansible déplacée avant l'enregistrement et le démarrage du runner |
 | Pas de métriques par conteneur avec cAdvisor sous Docker Desktop | cAdvisor ne voit pas les conteneurs de Docker Desktop | En production, on utilise le cAdvisor intégré au kubelet (k3s) ; sur la VM staging, le daemon Docker accepte les anciens clients API |
 
 ## Documentation
@@ -217,6 +219,14 @@ Pas encore exécuté : le runner GitHub et le déploiement continu par le pipeli
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 23/11/2026 : runner GitHub en service
+- Étape 6 : secrets, variables, environnement `production` configurés dans GitHub ; runner `staging-1` installé (service systemd, label `proxmox`) et connecté.
+- Le premier job pris par le runner (run #3, ancien commit) a échoué à l'étape `Collections Ansible` : le rôle démarrait le runner avant d'installer Ansible. Rôle `github_runner` corrigé (Ansible installé avant l'enregistrement du runner).
+- Garde-fous VM (PR #3) mergés dans `main`.
+- Run #7 : build OK, mais le déploiement staging échoue avec Ansible `UNREACHABLE` (code 4). La clé est bonne sur staging-1, mais le job n'a présenté aucune clé valide : le secret `ANSIBLE_SSH_PRIVATE_KEY` est mal copié.
+- Workflow : la clé est nettoyée (BOM UTF-8, CR, espaces, lignes vides) puis vérifiée avec `ssh-keygen` avant Ansible, avec un message d'erreur explicite et l'empreinte de la clé chargée. Testé sur 6 cas : clé intacte, BOM, CRLF + espaces, lignes vides, ligne END manquante, clé publique collée par erreur.
+- Tutoriel : copie de la clé via `Set-Clipboard`, nouveau cas de dépannage.
 
 ### 23/11/2026 : fond de page du frontend (PR #2)
 - Frontend : logo `claude-logo.svg` en arrière-plan fixe, centré et atténué par un voile translucide pour garder le contenu lisible (`style.css`). PR #2 de Zerda, mergée dans `main`.

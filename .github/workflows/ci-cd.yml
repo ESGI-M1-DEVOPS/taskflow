@@ -185,7 +185,13 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         run: |
           install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
-          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
+          # Nettoie les défauts de copier-coller (BOM UTF-8, CR Windows, espaces en bord de ligne, lignes vides)
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' | sed -e '1s/^\xEF\xBB\xBF//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' > "$RUNNER_TEMP/ansible_key"
+          if ! ssh-keygen -y -f "$RUNNER_TEMP/ansible_key" > "$RUNNER_TEMP/ansible_key.pub" 2>/dev/null; then
+            echo "::error::Le secret ANSIBLE_SSH_PRIVATE_KEY n'est pas une clé privée SSH valide. Recopier la sortie complète de 'cat ~/.ssh/ansible' (lignes BEGIN et END comprises)."
+            exit 1
+          fi
+          echo "Clé SSH chargée : $(ssh-keygen -lf "$RUNNER_TEMP/ansible_key.pub")"
           jq -n --arg db "$DB_PASSWORD" --arg gf "$GRAFANA_PASSWORD" --arg reg "$REGISTRY_TOKEN" \
             '{db_password: $db, grafana_admin_password: $gf, registry_password: $reg}' > "$RUNNER_TEMP/secrets.json"
           chmod 600 "$RUNNER_TEMP/secrets.json"
@@ -206,7 +212,7 @@ jobs:
 
       - name: Nettoyage des secrets
         if: always()
-        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/secrets.json"
+        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/ansible_key.pub" "$RUNNER_TEMP/secrets.json"
 
   deploy-production:
     name: Déploiement production
@@ -226,7 +232,13 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         run: |
           install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
-          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ansible_key"
+          # Nettoie les défauts de copier-coller (BOM UTF-8, CR Windows, espaces en bord de ligne, lignes vides)
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' | sed -e '1s/^\xEF\xBB\xBF//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' > "$RUNNER_TEMP/ansible_key"
+          if ! ssh-keygen -y -f "$RUNNER_TEMP/ansible_key" > "$RUNNER_TEMP/ansible_key.pub" 2>/dev/null; then
+            echo "::error::Le secret ANSIBLE_SSH_PRIVATE_KEY n'est pas une clé privée SSH valide. Recopier la sortie complète de 'cat ~/.ssh/ansible' (lignes BEGIN et END comprises)."
+            exit 1
+          fi
+          echo "Clé SSH chargée : $(ssh-keygen -lf "$RUNNER_TEMP/ansible_key.pub")"
           jq -n --arg db "$DB_PASSWORD" --arg reg "$REGISTRY_TOKEN" \
             '{db_password: $db, registry_password: $reg}' > "$RUNNER_TEMP/secrets.json"
           chmod 600 "$RUNNER_TEMP/secrets.json"
@@ -261,4 +273,4 @@ jobs:
 
       - name: Nettoyage des secrets
         if: always()
-        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/secrets.json"
+        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/ansible_key.pub" "$RUNNER_TEMP/secrets.json"
