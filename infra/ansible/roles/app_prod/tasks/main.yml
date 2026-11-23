@@ -30,6 +30,10 @@
         registry: "{{ registry }}"
         owner: "{{ image_owner }}"
         tag: "{{ image_tag }}"
+      # Images privées : la chart crée le secret docker-registry si le jeton est fourni.
+      registryAuth:
+        username: "{{ registry_username | default('') }}"
+        password: "{{ registry_password | default('') }}"
       db:
         imageTag: "{{ db_image_tag }}"
         password: "{{ db_password }}"

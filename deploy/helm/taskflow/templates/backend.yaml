@@ -26,10 +26,7 @@ spec:
         {{- include "taskflow.labels" . | nindent 8 }}
         app.kubernetes.io/component: backend
     spec:
-      {{- with .Values.pullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "taskflow.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 30
       # Répartit les replicas sur les 2 nœuds : un nœud peut être drainé sans coupure.
       topologySpreadConstraints:

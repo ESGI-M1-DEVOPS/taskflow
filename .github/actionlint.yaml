@@ -1,0 +1,5 @@
+# Configuration d'actionlint (lint des workflows GitHub Actions).
+self-hosted-runner:
+  # Label du runner self-hosted installé sur staging-1 (Proxmox)
+  labels:
+    - proxmox

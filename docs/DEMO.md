@@ -50,7 +50,7 @@ Exemple de fonctionnalité : la **priorité d'une tâche**.
    ```
    Puis ajouter `priority` à `TASK_COLUMNS`, accepter `priority` dans `POST /api/tasks` et ajouter un test.
 2. Frontend : ajouter un `<select>` à côté du champ de saisie et un badge dans la liste.
-3. Ouvrir une PR : la CI teste sans rien déployer. Merger : déploiement en staging, puis approbation de la production.
+3. Ouvrir une PR : la CI teste sans rien déployer. Montrer que le merge est **bloqué** tant qu'un autre membre n'a pas approuvé et que les 3 checks ne sont pas verts (règle `protection-main`). Un collègue approuve en direct, puis on merge : déploiement en staging, puis approbation de la production.
 4. **Pendant le déploiement**, lancer `.\scripts\check-availability.ps1 -Url http://10.1.20.73`. La version bascule de N à N+1, avec **0 erreur**.
 
 Expliquer pourquoi la migration est rétrocompatible : pendant le rolling update, l'ancienne version ignore la nouvelle colonne, qui a une valeur par défaut.
@@ -90,6 +90,6 @@ Dans Grafana, observer en même temps la latence, le panneau *Replicas (HPA)* et
 
 ## 8. Portabilité entre plateformes SysOps (2 min)
 
-- Déployer TaskFlow sur le cluster d'une autre équipe avec la commande `helm upgrade --install` du [contrat d'intégration](CONTRAT-INTEGRATION.md#c-fiche-taskflow).
+- Déployer TaskFlow sur le cluster d'une autre équipe avec la commande `helm upgrade --install` du [contrat d'intégration](CONTRAT-INTEGRATION.md#c-fiche-taskflow), en lui donnant le jeton de lecture des images. Nos images sont privées, mais la plateforme n'a rien de spécial à configurer : c'est la chart qui crée le secret `docker-registry`.
 - Déployer l'application d'une autre équipe sur notre cluster, dans son propre namespace, avec un hôte dédié.
 - Montrer que son `ServiceMonitor` et ses logs apparaissent dans notre Grafana sans configuration supplémentaire.

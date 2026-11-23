@@ -10,7 +10,7 @@ Documentation :
 
 | Exigence du sujet | Mise en œuvre |
 |---|---|
-| Conteneurs | 1 Dockerfile par composant, images non-root, publiées sur GHCR |
+| Conteneurs | 1 Dockerfile par composant, images non-root, publiées sur GHCR en **privé** (lecture par jeton) |
 | Staging | Docker Compose sur une VM dédiée |
 | Production | Kubernetes k3s sur 2 VM, application packagée en chart Helm |
 | IaC | Ansible : de la VM vierge au cluster supervisé + application déployée |
@@ -93,7 +93,7 @@ Tests et lint du backend : `cd app/backend && npm ci && npm test && npm run lint
 
 En résumé :
 1. Renseigner les IP et l'utilisateur SSH dans [hosts.yml](infra/ansible/inventories/proxmox/hosts.yml), puis `image_owner` et `github_repository` dans [group_vars/all.yml](infra/ansible/inventories/proxmox/group_vars/all.yml).
-2. Pousser sur un dépôt **public** de l'organisation GitHub. Après le premier pipeline, rendre publiques les 3 images GHCR.
+2. Pousser sur un dépôt **public** de l'organisation GitHub. Les images restent **privées** sur GHCR : créer un jeton GitHub *classic* `read:packages`, que les serveurs utilisent pour les télécharger.
 3. Depuis `staging-1`, lancer `ansible-playbook playbooks/site.yml -e @secrets.yml -K`. Ce playbook idempotent construit toute l'infrastructure et déploie l'application.
 4. Dans GitHub, créer les secrets, les variables et l'environnement `production` avec approbation. Installer ensuite le runner avec `playbooks/github-runner.yml`. Le runner se connecte à GitHub en sortie : aucun port n'est à ouvrir sur le réseau Proxmox.
 
@@ -118,8 +118,10 @@ flowchart LR
   E -->|approbation| F[production<br/>Ansible + Helm --atomic<br/>vérif. Ingress]
 ```
 
+- **Branche `main` protégée** (ruleset `protection-main`) : toute modification passe par une pull request **approuvée par un autre membre**, avec les 3 checks verts (lint, tests, build). Une nouvelle approbation est exigée après tout nouveau push. Force push et suppression de `main` sont interdits.
+- **Images privées** : la CI publie sur GHCR avec son `GITHUB_TOKEN`. Les serveurs les téléchargent avec un jeton classique en lecture seule (`read:packages`), via `docker login` sur le staging et un secret `docker-registry` créé par la chart en production.
 - **Pull request** : lint, tests, build et smoke test. Rien n'est publié ni déployé.
-- **Push sur `main`** : le pipeline complet. Chaque image porte le SHA du commit : une version est identifiable de bout en bout (pipeline, registry, pied de page de l'interface, logs).
+- **Merge sur `main`** : le pipeline complet. Chaque image porte le SHA du commit : une version est identifiable de bout en bout (pipeline, registry, pied de page de l'interface, logs).
 - **Exécution** : les jobs de déploiement tournent sur le runner self-hosted et appellent les **mêmes playbooks Ansible** que ceux utilisés à la main. Il n'y a pas de logique de déploiement cachée dans la CI.
 
 ## Zero-downtime et auto-scaling
@@ -167,6 +169,9 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 | Déploiement d'une image inexistante | rollback automatique, 473 requêtes, **0 erreur** |
 | Ansible sur un Debian 13.7 nu (root, sans Python ni sudo) : `bootstrap.yml`, rôles `common` et `docker` (dépôt Docker trixie) | OK jusqu'aux étapes qui demandent systemd, absent d'un conteneur |
 | Compte sudoer `admin` sur Debian 13 : 1er passage avec mot de passe sudo (`-K`), puis 2e passage sans mot de passe, comme la CI | OK : règle `NOPASSWD` posée, élévation sans mot de passe ensuite |
+| Chart Helm avec images privées : rendu avec et sans jeton, secret `docker-registry` décodé, `kubeconform` (schémas Kubernetes) | 3 pods avec `imagePullSecrets`, 14/14 ressources valides |
+| Workflow GitHub Actions passé à `actionlint` (+ shellcheck) | 0 problème |
+| Jeton de lecture GHCR (compte Poliaqt, droit `read:packages` seul) | 3 images privées lisibles avec le jeton (API registry et `docker login`), refusées sans jeton |
 
 Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s multi-nœuds, kube-prometheus-stack, Loki/Alloy), le runner GitHub et le pipeline sur GitHub.
 
@@ -198,6 +203,19 @@ Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s mul
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 23/11/2026 : images privées sur GHCR
+- Les images restent privées. Les serveurs les lisent avec un jeton GitHub *classic* limité à `read:packages` (variables `registry_username` / `registry_password`, secret GitHub `GHCR_READ_TOKEN`).
+- Chart Helm : nouvelle valeur `registryAuth` ; la chart crée un secret `docker-registry` utilisé par les pods frontend, backend et BDD. Elle reste compatible avec des images publiques (jeton vide) et avec des secrets existants (`pullSecrets`).
+- Ansible : `docker login` sur le staging avant le `docker compose pull` ; transmission du jeton à Helm en production.
+- Pipeline : le jeton est passé aux jobs de déploiement ; ajout de `.github/actionlint.yaml` (label `proxmox`) et corrections shellcheck.
+- Contrat d'intégration : B1 accepte une registry privée avec un jeton en lecture seule ; A11, la plateforme accepte les `imagePullSecrets`.
+- Tutoriel : l'étape 3.5 devient « jeton de lecture » (au lieu de passer les images en public) ; nouveau secret à l'étape 6.1 ; nouveaux cas de dépannage.
+
+### 23/11/2026 : revue de code obligatoire
+- Branche `main` protégée par un ruleset : PR obligatoire, approbation par un autre membre, nouvelle approbation après tout push, conversations résolues, checks CI verts. Force push et suppression interdits.
+- Tutoriel : équipe GitHub `taskflow-devops` avec le rôle Write (étapes 3.1 et 3.6), réglages du ruleset (3.6), circuit branche → PR → relecture → merge (étape 7), nouveaux cas de dépannage.
+- Scénario de démo : la relecture par un autre membre est montrée en direct.
 
 ### 23/11/2026 : publication du dépôt
 - Premier push sur https://github.com/ESGI-M1-DEVOPS/taskflow (branche `main`), qui déclenche le premier pipeline CI/CD.

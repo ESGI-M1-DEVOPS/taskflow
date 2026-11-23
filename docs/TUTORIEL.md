@@ -107,10 +107,11 @@ Test-NetConnection 10.1.20.73 -Port 22      # TcpTestSucceeded : True
 Dans `https://github.com/organizations/ESGI-M1-DEVOPS/settings` :
 
 - **People** : les 4 membres font partie de l'organisation.
+- **Teams > New team** (`https://github.com/orgs/ESGI-M1-DEVOPS/teams`) : équipe `taskflow-devops` avec les 4 membres. Elle recevra le droit d'écriture sur le dépôt à l'étape 3.6.
 - **Actions > General** :
   - *Actions permissions* : « Allow all actions and reusable workflows » ;
   - *Fork pull request workflows from outside collaborators* : « Require approval for all outside collaborators ». C'est important : le runner self-hosted tourne chez vous.
-- **Packages > Package creation** : cocher **Public**.
+- **Personal access tokens** : laisser autorisés les jetons *classic*. Les serveurs s'en servent pour lire les images privées (étape 3.5).
 
 ### 3.2 Créer le dépôt
 
@@ -137,18 +138,66 @@ git push -u origin main
 
 Ouvrir `https://github.com/ESGI-M1-DEVOPS/taskflow/actions`. Les jobs `Lint & analyse statique`, `Tests automatisés` puis `Build, smoke test & publication des images` doivent passer au vert, en 5 min environ.
 
-Le job `Déploiement staging` reste en *Waiting for a runner* : c'est normal, le runner arrive à l'étape 6. On peut annuler le run (*Cancel workflow*) une fois `build` terminé.
+Le job `Déploiement staging` reste en *Waiting for a runner* : le runner n'arrive qu'à l'étape 6. **Annulez ce premier run** (*Cancel workflow*) : il a été lancé avant la prise en charge des images privées et échouerait au déploiement.
 
-### 3.5 Rendre les images publiques
+### 3.5 Jeton de lecture des images (les images restent privées)
 
-Ouvrir `https://github.com/orgs/ESGI-M1-DEVOPS/packages`. Pour `taskflow-backend`, `taskflow-frontend` et `taskflow-db` : *Package settings > Danger Zone > Change visibility > Public*.
+Les images restent **privées** sur GHCR. Les serveurs (k3s et le Docker du staging) les téléchargent avec un **jeton GitHub en lecture seule**.
 
-✅ **Vérification**, sans être connecté à ghcr.io :
+1. Connecté avec le compte **Poliaqt**, qui est le `registry_username` de [group_vars/all.yml](../infra/ansible/inventories/proxmox/group_vars/all.yml), ouvrir *Settings > Developer settings > Personal access tokens > **Tokens (classic)** > Generate new token (classic)* :
+   - Note : `taskflow-ghcr-read` ;
+   - Expiration : 30 jours, pour couvrir la soutenance ;
+   - Scopes : cocher **uniquement `read:packages`**.
+2. Copier le jeton (`ghp_...`) tout de suite : GitHub ne l'affichera plus. Il sert à deux endroits :
+   - `registry_password` dans `secrets.yml` (étape 4) ;
+   - le secret GitHub `GHCR_READ_TOKEN` (étape 6.1).
+
+> Pourquoi un jeton *classic* : GHCR n'accepte pas les jetons *fine-grained*. Le `GITHUB_TOKEN` de la CI ne convient pas non plus : il expire à la fin du job, alors que k3s doit pouvoir retélécharger les images plus tard (auto-scaling, redémarrage d'un pod). Si c'est un autre membre qui crée le jeton, mettez **son** login dans `registry_username`.
+
+✅ **Vérification** :
 
 ```powershell
 # Windows (PowerShell)
-docker pull ghcr.io/esgi-m1-devops/taskflow-backend:latest
+docker logout ghcr.io
+docker pull ghcr.io/esgi-m1-devops/taskflow-backend:latest   # refusé : "unauthorized" (images bien privées)
+docker login ghcr.io -u Poliaqt                               # coller le jeton comme mot de passe
+docker pull ghcr.io/esgi-m1-devops/taskflow-backend:latest   # OK
+docker logout ghcr.io
 ```
+
+### 3.6 Protéger `main` : chaque PR est validée par un autre membre
+
+À partir d'ici, plus personne ne pousse directement sur `main` : toute modification passe par une **pull request approuvée par un autre membre**, avec une CI verte.
+
+**1. Donner le droit d'écriture à l'équipe.** Sans lui, un membre ne peut ni pousser de branche, ni donner une approbation qui compte.
+
+*Settings du dépôt > Collaborators and teams > Add teams* : `taskflow-devops`, rôle **Write**.
+
+**2. Créer la règle.** *Settings du dépôt > Rules > Rulesets > New ruleset > New branch ruleset* :
+
+| Réglage | Valeur |
+|---|---|
+| Ruleset Name | `protection-main` |
+| Enforcement status | **Active** |
+| Bypass list | vide : personne ne contourne la règle |
+| Target branches | *Add target > Include default branch* |
+| Restrict deletions | ☑ |
+| **Require a pull request before merging** | ☑ |
+| ↳ Required approvals | **1** |
+| ↳ Dismiss stale pull request approvals when new commits are pushed | ☑ |
+| ↳ Require approval of the most recent reviewable push | ☑ |
+| ↳ Require conversation resolution before merging | ☑ |
+| **Require status checks to pass** | ☑, puis *Add checks* : `Lint & analyse statique`, `Tests automatisés`, `Build, smoke test & publication des images` |
+| Block force pushes | ☑ |
+
+Cliquer sur **Create**.
+
+Ce que ces options garantissent :
+- **Un autre membre valide toujours.** L'auteur d'une PR ne peut pas l'approuver lui-même.
+- **Pas de code non relu.** Si quelqu'un pousse après une approbation, celle-ci est annulée et il faut une nouvelle validation.
+- **CI obligatoire.** Les 3 checks doivent être verts pour pouvoir merger.
+
+✅ **Vérification** : dans *Settings > Rules > Rulesets*, `protection-main` est **Active**. À la première PR (étape 7), GitHub affiche *Review required* et le bouton de merge reste bloqué tant qu'un autre membre n'a pas approuvé.
 
 ---
 
@@ -183,10 +232,10 @@ chmod 600 ~/.ssh/config
 cd ~/taskflow/infra/ansible
 cp secrets.example.yml secrets.yml
 openssl rand -hex 32        # à copier dans k3s_token
-nano secrets.yml            # db_password, k3s_token, grafana_admin_password
+nano secrets.yml            # db_password, k3s_token, grafana_admin_password, registry_password (jeton de l'étape 3.5)
 ```
 
-> Notez `db_password` et `grafana_admin_password` : les **mêmes valeurs** iront dans les secrets GitHub à l'étape 6. `secrets.yml` est ignoré par git : il ne sera jamais poussé.
+> Notez `db_password`, `grafana_admin_password` et `registry_password` : les **mêmes valeurs** iront dans les secrets GitHub à l'étape 6. `secrets.yml` est ignoré par git : il ne sera jamais poussé.
 
 ✅ **Vérification** :
 
@@ -262,6 +311,7 @@ Tout se passe dans `https://github.com/ESGI-M1-DEVOPS/taskflow/settings`.
 | `ANSIBLE_SSH_PRIVATE_KEY` | sortie de `cat ~/.ssh/ansible` sur staging-1, **lignes BEGIN et END comprises** |
 | `DB_PASSWORD` | **la même** valeur que `db_password` dans `secrets.yml` |
 | `GRAFANA_ADMIN_PASSWORD` | **la même** valeur que `grafana_admin_password` |
+| `GHCR_READ_TOKEN` | le jeton de lecture des images de l'étape 3.5 (= `registry_password`) |
 
 > ⚠️ Si `DB_PASSWORD` diffère de `secrets.yml`, le backend ne pourra plus se connecter : PostgreSQL garde le mot de passe de sa création.
 
@@ -288,14 +338,22 @@ Onglet *Variables* :
 
 ---
 
-## Étape 7 : premier déploiement continu (≈ 10 min)
+## Étape 7 : premier déploiement continu, via une PR (≈ 15 min)
 
-1. Faire un changement visible depuis Windows, par exemple le sous-titre dans [app/frontend/public/index.html](../app/frontend/public/index.html) :
+C'est le circuit à suivre pour **toute** modification.
+
+1. **Créer une branche** à partir d'un `main` à jour, et y faire un changement visible, par exemple le sous-titre dans [app/frontend/public/index.html](../app/frontend/public/index.html) :
    ```powershell
-   git add . ; git commit -m "Nouveau sous-titre" ; git push
+   # Windows (PowerShell), dans le dossier taskflow
+   git switch main ; git pull
+   git switch -c feature/sous-titre
+   # ... modifier le fichier ...
+   git add . ; git commit -m "Nouveau sous-titre" ; git push -u origin feature/sous-titre
    ```
-2. Dans **Actions**, suivre le run : lint et tests, puis build, puis **staging** (automatique), puis **production**, qui attend l'approbation (*Review deployments > Approve*).
-3. Pendant le déploiement en production, lancer la sonde de disponibilité :
+2. **Ouvrir la PR.** Sur GitHub, cliquer sur *Compare & pull request* puis *Create pull request*. La CI tourne sur la PR (lint, tests, build et smoke test) sans rien publier ni déployer.
+3. **Faire relire.** Un **autre membre** ouvre l'onglet *Files changed*, puis *Review changes > Approve*.
+4. **Merger.** Cliquer sur *Merge pull request*, puis *Delete branch*. Le merge sur `main` déclenche le pipeline complet : build, puis **staging** (automatique), puis **production**, qui attend l'approbation (*Review deployments > Approve*).
+5. Pendant le déploiement en production, lancer la sonde de disponibilité :
    ```powershell
    .\scripts\check-availability.ps1 -Url http://10.1.20.73
    ```
@@ -304,7 +362,7 @@ Onglet *Variables* :
 - le pied de page de http://10.1.20.73/ affiche le **SHA du commit** ;
 - la sonde affiche **0 erreur** pendant la bascule.
 
-> Après un push, pensez à `git pull` dans `~/taskflow` sur staging-1 avant de relancer un playbook à la main. La CI, elle, récupère toujours le code à jour toute seule.
+> Après un merge, pensez à `git pull` dans `~/taskflow` sur staging-1 avant de relancer un playbook à la main. La CI, elle, récupère toujours le code à jour toute seule.
 
 ---
 
@@ -327,11 +385,15 @@ Onglet *Variables* :
 | `Missing sudo password` | premier lancement sans `-K` | relancer avec `-K` |
 | Job CI en échec : `sudo: a password is required` | `site.yml` n'a jamais été mené jusqu'au rôle `common` | relancer `site.yml -e @secrets.yml -K` depuis staging-1 |
 | Le worker k8s-2 n'apparaît pas dans `kubectl get nodes` | VM clonée : hostname ou machine-id identiques | encadré de l'étape 1, puis `sudo /usr/local/bin/k3s-agent-uninstall.sh` sur k8s-2 et relancer `site.yml` |
-| Pods en `ImagePullBackOff` | images GHCR encore privées | étape 3.5 |
+| Pods en `ImagePullBackOff`, ou `unauthorized` au `docker compose pull` | jeton de lecture absent, expiré ou sans `read:packages` | étape 3.5 ; vérifier `registry_password` dans `secrets.yml` et le secret `GHCR_READ_TOKEN`, puis relancer le déploiement |
+| `docker login ghcr.io` refusé alors que le jeton est neuf | l'organisation bloque les jetons *classic*, ou le compte n'a pas accès aux packages | étape 3.1 (*Personal access tokens*) ; vérifier que `Poliaqt` voit bien les packages de l'organisation |
 | Pods en `Pending` | RAM ou CPU insuffisants | `kubectl describe pod <pod>` ; augmenter la RAM de la VM, ou `loki_enabled: false` dans `group_vars/all.yml` |
 | Timeout sur `kube-prometheus-stack` | téléchargement des images trop lent | relancer `site.yml` (idempotent) |
 | HPA en `<unknown>` | metrics-server pas encore prêt | attendre 1 à 2 min |
 | Job CI bloqué en *Waiting for a runner* | runner arrêté ou mauvais label | `systemctl status 'actions.runner.*'` sur staging-1 ; label `proxmox` présent ? |
 | Pas de bouton d'approbation de la production | dépôt privé sur le plan gratuit | passer le dépôt en public (étape 3.2) |
 | Backend en erreur d'authentification PostgreSQL | `DB_PASSWORD` différent entre GitHub et `secrets.yml` | remettre la valeur d'origine dans le secret GitHub |
+| `git push` refusé : `GH013: Repository rule violations` | push direct sur `main`, interdit par la règle de l'étape 3.6 | passer par une branche et une PR (étape 7) |
+| Bouton de merge grisé : *Review required* | la PR n'a pas encore été approuvée par un autre membre | demander une relecture ; l'auteur ne peut pas s'auto-approuver |
+| Un membre ne peut pas pousser sa branche (`403`) | l'équipe n'a pas le rôle Write sur le dépôt | étape 3.6, point 1 |
 | Dans les logs du playbook : `rollback effectué` | le smoke test post-déploiement a échoué : l'ancienne version est toujours servie | voir les logs : `kubectl -n taskflow logs deploy/taskflow-backend` |

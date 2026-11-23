@@ -18,12 +18,13 @@ Le sujet exige que **tout conteneur de n'importe quelle équipe DevOps puisse ê
 | A8 | Grafana : toute ConfigMap portant le label `grafana_dashboard: "1"` est importée comme dashboard | sidecar Grafana, tous namespaces |
 | A9 | Les logs stdout/stderr de tous les pods sont centralisés et interrogeables par namespace, pod, conteneur et niveau | Loki + Alloy |
 | A10 | Accès en lecture à Grafana pour chaque équipe | NodePort 30300 |
+| A11 | Images privées acceptées : secret `docker-registry` dans le namespace de l'équipe, référencé par `imagePullSecrets` | standard Kubernetes |
 
 ## B. Ce que doit respecter un conteneur applicatif (DevOps)
 
 | # | Règle | Pourquoi |
 |---|---|---|
-| B1 | Image publiée sur une registry **publique** (Docker Hub ou GHCR public), plateforme `linux/amd64` | La plateforme ne gère pas les identifiants des autres équipes |
+| B1 | Image accessible depuis la plateforme, `linux/amd64` : registry publique, **ou** registry privée avec un identifiant **en lecture seule** fourni à l'équipe qui déploie | La plateforme n'a pas à connaître les comptes des autres équipes ; un jeton en lecture seule limite le risque |
 | B2 | Tag **immuable** (SHA du commit ou version SemVer) ; `latest` interdit en production | Rollback et traçabilité |
 | B3 | Toute la configuration passe par des **variables d'environnement** (adresses, identifiants, niveau de log) | Aucune adresse propre à une plateforme dans l'image |
 | B4 | Aucun secret dans l'image ; les secrets sont injectés au déploiement (Secret Kubernetes) | Sécurité, portabilité |
@@ -39,7 +40,7 @@ Le sujet exige que **tout conteneur de n'importe quelle équipe DevOps puisse ê
 
 ## C. Fiche TaskFlow
 
-Images publiques : `ghcr.io/esgi-m1-devops/taskflow-{frontend,backend}:<sha>` et `ghcr.io/esgi-m1-devops/taskflow-db:<version>`.
+Images **privées** : `ghcr.io/esgi-m1-devops/taskflow-{frontend,backend}:<sha>` et `ghcr.io/esgi-m1-devops/taskflow-db:<version>`. Nous fournissons à l'équipe qui déploie un jeton GitHub en lecture seule (`read:packages`), à passer à la chart. Elle crée elle-même le secret `docker-registry`.
 
 | Image | Port | Variables d'environnement | Santé | Métriques |
 |---|---|---|---|---|
@@ -53,6 +54,7 @@ Déploiement sur n'importe quelle plateforme conforme à la partie A :
 helm upgrade --install taskflow deploy/helm/taskflow \
   -n taskflow --create-namespace \
   --set image.owner=esgi-m1-devops --set image.tag=<sha> \
+  --set registryAuth.username=<login GitHub> --set registryAuth.password=<jeton lecture> \
   --set db.password=<secret> \
   --set ingress.host=taskflow.<IP>.nip.io
 ```

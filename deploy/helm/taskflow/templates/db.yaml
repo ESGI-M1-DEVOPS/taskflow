@@ -46,10 +46,7 @@ spec:
       labels:
         {{- include "taskflow.selector" $sel | nindent 8 }}
     spec:
-      {{- with .Values.pullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "taskflow.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 60
       containers:
         - name: postgres
