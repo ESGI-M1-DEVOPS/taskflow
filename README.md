@@ -171,6 +171,7 @@ Tests réalisés le 23/11/2026 sur un k3s v1.31 dans Docker :
 | Compte sudoer `admin` sur Debian 13 : 1er passage avec mot de passe sudo (`-K`), puis 2e passage sans mot de passe, comme la CI | OK : règle `NOPASSWD` posée, élévation sans mot de passe ensuite |
 | Chart Helm avec images privées : rendu avec et sans jeton, secret `docker-registry` décodé, `kubeconform` (schémas Kubernetes) | 3 pods avec `imagePullSecrets`, 14/14 ressources valides |
 | Workflow GitHub Actions passé à `actionlint` (+ shellcheck) | 0 problème |
+| Jeton de lecture GHCR (compte Poliaqt, droit `read:packages` seul) | 3 images privées lisibles avec le jeton (API registry et `docker login`), refusées sans jeton |
 
 Pas encore exécuté sur les VM Proxmox : les playbooks complets (socle, k3s multi-nœuds, kube-prometheus-stack, Loki/Alloy), le runner GitHub et le pipeline sur GitHub.
 
