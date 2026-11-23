@@ -25,7 +25,9 @@ app_host: ""                   # ex: taskflow.192.168.1.31.nip.io ; vide = toute
 
 # --- k3s ---
 k3s_channel: stable
-k3s_version: ""                # ex: v1.33.5+k3s1 pour figer la version
+# Versions figées = celles validées sur Proxmox le 23/11/2026 (reconstruction reproductible).
+# Pour monter de version : changer ici, tester, puis PR.
+k3s_version: "v1.37.2+k3s1"    # vide = dernière version du canal k3s_channel
 k3s_kubeconfig: /etc/rancher/k3s/k3s.yaml
 k3s_server_ip: "{{ hostvars[groups['k3s_server'][0]].ansible_host }}"
 
@@ -34,6 +36,9 @@ monitoring_namespace: monitoring
 grafana_nodeport: 30300
 prometheus_nodeport: 30090
 loki_enabled: true
+kps_chart_version: "93.9.0"    # kube-prometheus-stack (Prometheus 3.16, Grafana 13.3, Alertmanager 0.35)
+loki_chart_version: "7.7.0"    # Loki 3.6
+alloy_chart_version: "1.16.0"  # Grafana Alloy 1.22
 
 # --- Staging ---
 staging_dir: /opt/taskflow

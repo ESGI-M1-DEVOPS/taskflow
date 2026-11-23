@@ -43,11 +43,13 @@ flowchart LR
 
 ## Étape 1 : les VM Proxmox (≈ 20 min)
 
-| VM | Hostname | IP | vCPU | RAM | Disque |
-|---|---|---|---|---|---|
-| staging | `staging-1` | 10.1.20.72 | 2 | 4 Go | 30 Go |
-| k3s control-plane | `k8s-1` | 10.1.20.73 | 4 | 6 Go | 40 Go |
-| k3s worker | `k8s-2` | 10.1.20.74 | 2 | 4 Go | 30 Go |
+| VM | Hostname | IP | vCPU | RAM | Disque | Minimum (garde-fou Ansible) |
+|---|---|---|---|---|---|---|
+| staging | `staging-1` | 10.1.20.72 | 4 | 4 Go | 30 Go | 1,8 Go de RAM |
+| k3s control-plane | `k8s-1` | 10.1.20.73 | 4 | 6 Go | 30 Go | 3,5 Go de RAM |
+| k3s worker | `k8s-2` | 10.1.20.74 | 2 | 4 Go | 30 Go | 1,8 Go de RAM |
+
+Ce sont les VM en service. Avec ces ressources, `site.yml` s'exécute en une dizaine de minutes.
 
 - **De vraies VM** (*Create VM* dans Proxmox, KVM/QEMU), **pas des conteneurs** (*Create CT* / LXC) : k3s et Docker ne fonctionnent pas correctement dans un LXC. Ansible refuse désormais de continuer sur un conteneur, ou sur une machine qui manque de RAM.
 - Debian 13 avec le **serveur SSH** et le compte sudoer **`admin`**. Si Python manque, Ansible l'installe lui-même.
@@ -141,7 +143,9 @@ git push -u origin main
 
 Ouvrir `https://github.com/ESGI-M1-DEVOPS/taskflow/actions`. Les jobs `Lint & analyse statique`, `Tests automatisés` puis `Build, smoke test & publication des images` doivent passer au vert, en 5 min environ.
 
-Le job `Déploiement staging` reste en *Waiting for a runner* : le runner n'arrive qu'à l'étape 6. **Annulez ce premier run** (*Cancel workflow*) : il a été lancé avant la prise en charge des images privées et échouerait au déploiement.
+Le job `Déploiement staging` reste en *Waiting for a runner* : le runner n'arrive qu'à l'étape 6. **Annulez ces runs en attente** (*Cancel workflow*) : le premier merge fait après l'étape 6 déploiera la dernière version.
+
+> Ne relancez jamais un ancien run pour déployer : il redéploierait un ancien commit. Le workflow le refuse désormais avec l'étape « Refuser un déploiement obsolète ».
 
 ### 3.5 Jeton de lecture des images (les images restent privées)
 
@@ -251,7 +255,7 @@ ansible all -m raw -a "hostname"
 
 ---
 
-## Étape 5 : construire toute l'infrastructure (≈ 20 à 30 min)
+## Étape 5 : construire toute l'infrastructure (≈ 10 min mesurées, jusqu'à 30 min si le réseau est lent)
 
 ```bash
 # staging-1 (bash), dans ~/taskflow/infra/ansible
@@ -271,6 +275,13 @@ Le playbook enchaîne :
 Le récapitulatif final doit afficher **`failed=0`** pour les 3 VM.
 
 > Si l'installation du monitoring dépasse le délai (téléchargement lent), relancez **la même commande** : le playbook est idempotent et reprend là où il en était.
+
+> Pour un long lancement, mieux vaut le détacher de la session SSH : une coupure Twingate ne l'interrompra pas.
+> ```bash
+> nohup ansible-playbook playbooks/site.yml -e @secrets.yml > ~/site-run.log 2>&1 &
+> tail -f ~/site-run.log
+> ```
+> `-K` ne fonctionne pas en détaché. Lancez-le donc ainsi seulement **après** un premier passage, quand sudo n'exige plus de mot de passe.
 
 ✅ **Vérifications** :
 
@@ -330,8 +341,9 @@ Onglet *Variables* :
 
 ### 6.4 Runner self-hosted
 
-1. *Actions > Runners > New self-hosted runner > Linux*. Copier **uniquement le jeton** de la ligne `./config.sh --url ... --token XXXXXXXX`. Il est valable 1 h.
-2. Installer le runner :
+1. *Actions > Runners > New self-hosted runner > Linux*. Copier **uniquement le jeton** de la ligne `./config.sh --url ... --token XXXXXXXX`. Il est valable 1 h. **N'exécutez aucune des commandes de cette page** : le playbook s'en charge et installe le runner comme service systemd, sous un utilisateur dédié, avec le label `proxmox`.
+2. Avant d'installer : annulez les runs encore en attente de runner. Sinon, le runner les prendra dès son démarrage.
+3. Installer le runner :
    ```bash
    # staging-1 (bash), dans ~/taskflow/infra/ansible
    ansible-playbook playbooks/github-runner.yml -e @secrets.yml -e github_runner_token=XXXXXXXX
@@ -367,6 +379,8 @@ C'est le circuit à suivre pour **toute** modification.
 
 > Après un merge, pensez à `git pull` dans `~/taskflow` sur staging-1 avant de relancer un playbook à la main. La CI, elle, récupère toujours le code à jour toute seule.
 
+> Si un déploiement échoue, corrigez puis relancez le run du **dernier** commit de `main` (*Re-run failed jobs*), jamais un run plus ancien. Si plusieurs runs attendent l'approbation de la production, n'approuvez que le plus récent.
+
 ---
 
 ## Étape 8 : préparer la soutenance
@@ -377,6 +391,7 @@ C'est le circuit à suivre pour **toute** modification.
 - [ ] Préparer la branche de fonctionnalité à merger en direct (étape 4 de DEMO.md).
 - [ ] Remplir la répartition des rôles dans le [README](../README.md).
 - [ ] Le matin même : Twingate connecté, VM allumées, pipeline vert, Grafana ouvert sur le dashboard.
+- [ ] **Après la soutenance** : supprimer le jeton GHCR (*Settings > Developer settings > Tokens (classic)*), qui n'expire pas.
 
 ---
 
