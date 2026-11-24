@@ -238,7 +238,7 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 | Logs centralisés | Loki reçoit les logs, labels `component` (backend, frontend, db…) et `level` (info, warn, error…) |
 | Staging | 6 conteneurs (application + Prometheus, Grafana, cAdvisor) démarrés et sains |
 | Déploiement continu de bout en bout (run #7, puis run #9) | Build, images privées sur GHCR, runner self-hosted sur Proxmox, Ansible, staging, puis production après approbation |
-| **Zero-downtime en production réelle**, rolling update déclenché par la CI et sondé toutes les 0,3 s | Run #7 : **285 requêtes, 0 erreur**. Run #11 : **349 requêtes, 0 erreur**, anciens et nouveaux pods en alternance pendant 12,6 s |
+| **Zero-downtime en production réelle**, rolling update déclenché par la CI et sondé toutes les 0,3 s | Run #7 : **285 requêtes, 0 erreur**. Run #11 : **349 requêtes, 0 erreur**, anciens et nouveaux pods en alternance pendant 12,6 s. PR #7 (`d9e9960`, 24/11) : **778 requêtes, 0 erreur**, 11,2 s de cohabitation |
 | Garde-fou « déploiement obsolète » (run #11, commit `74d39e3`) | Étape passée ; staging puis production déployés en `74d39e3` |
 
 ## Difficultés rencontrées et solutions
@@ -281,6 +281,7 @@ Le plus récent en haut. Chaque modification du projet est notée ici.
 - Rôles `app_prod` et `app_staging` : sans version explicite, ils relisent la version déjà déployée (valeurs de la release Helm, `.env` du staging) et la conservent. `latest` n'est utilisé qu'au tout premier déploiement. La CI, qui passe toujours le SHA, n'est pas concernée.
 - Chart : `imagePullPolicy: Always` quand le tag vaut `latest`, pour ne jamais réutiliser une vieille image en cache.
 - Testé : 9 cas de choix de version avec ansible-core 2.22 (relance, premier déploiement, version explicite), rendu de la chart (`Always` pour `latest`, `IfNotPresent` pour un SHA), syntaxe des playbooks.
+- Production restaurée par le pipeline de la PR #7 : `d9e9960` en staging et en production, logo revenu. Rolling update sondé : 778 requêtes, 0 erreur. Le staging, mis à jour par recréation des conteneurs docker compose, est indisponible quelques secondes pendant sa mise à jour : c'est attendu, le zero-downtime ne concerne que la production.
 
 ### 23/11/2026 : mise à jour de la documentation technique, versions figées
 - Décision : le dépôt reste **public**. En privé, le plan gratuit de GitHub désactiverait la relecture obligatoire des PR et l'approbation de la production. Aucun secret n'est dans le dépôt, et les images restent privées.
