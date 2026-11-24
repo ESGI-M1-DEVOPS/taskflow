@@ -83,6 +83,12 @@ variable "ip_cidr" {
   type        = string
 }
 
+variable "ip_prefix_length" {
+  description = "Masque appliqué à la VM ; null = celui de ip_cidr."
+  type        = number
+  default     = null
+}
+
 variable "ip_first_host" {
   description = "Première adresse de la plage réservée aux PR (numéro d'hôte dans ip_cidr)."
   type        = number

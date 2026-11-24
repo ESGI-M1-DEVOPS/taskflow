@@ -387,7 +387,7 @@ C'est le circuit à suivre pour **toute** modification.
 
 À chaque PR, le pipeline crée une VM Proxmox avec Terraform, Ansible y déploie la version de la PR, et le lien est publié dans la PR. À la fermeture de la PR, la VM est détruite. Fonctionnement détaillé : [README, Pipeline CI/CD](../README.md#environnement-de-test-de-chaque-pull-request-terraform).
 
-Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox (*Datacenter > nom du nœud > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les noms `local-lvm` (stockage) et `vmbr0` (bridge) sont ceux d'une installation par défaut : remplacez-les si les VM du projet utilisent d'autres valeurs (*VM > Hardware*).
+Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox `SRV-LVNO-PROD-02` (*Datacenter > SRV-LVNO-PROD-02 > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les VM de PR utilisent le stockage `syno-lun01` (LUN iSCSI du Synology) et le bridge `vmbr0`. Sur un autre Proxmox, prenez les valeurs des VM existantes (*VM > Hardware*).
 
 ### 8.1 Template Debian 13 cloud-init
 
@@ -398,8 +398,8 @@ cd /tmp && wget -q https://cloud.debian.org/images/cloud/trixie/latest/debian-13
 qm create 9000 --name debian13-cloud-template --pool taskflow-preview --ostype l26 \
   --cores 2 --memory 2048 --cpu x86-64-v2-AES --scsihw virtio-scsi-single \
   --net0 virtio,bridge=vmbr0 --serial0 socket --vga serial0
-qm set 9000 --scsi0 local-lvm:0,import-from=/tmp/debian-13-genericcloud-amd64.qcow2,discard=on
-qm set 9000 --ide2 local-lvm:cloudinit --boot order=scsi0
+qm set 9000 --scsi0 syno-lun01:0,import-from=/tmp/debian-13-genericcloud-amd64.qcow2,discard=on
+qm set 9000 --ide2 syno-lun01:cloudinit --boot order=scsi0
 qm template 9000
 rm /tmp/debian-13-genericcloud-amd64.qcow2
 ```
@@ -414,7 +414,7 @@ Le jeton n'a de droits **que sur le pool `taskflow-preview`** : il ne peut ni vo
 # Proxmox (shell root du nœud)
 pveum user add terraform@pve --comment "TaskFlow : environnements de PR (Terraform, CI)"
 pveum aclmod /pool/taskflow-preview -user terraform@pve -role PVEVMAdmin
-pveum aclmod /storage/local-lvm -user terraform@pve -role PVEDatastoreUser
+pveum aclmod /storage/syno-lun01 -user terraform@pve -role PVEDatastoreUser
 pveum aclmod /sdn/zones/localnetwork -user terraform@pve -role PVESDNUser   # Proxmox 8 et plus
 pveum user token add terraform@pve ci --privsep 0
 ```
@@ -423,21 +423,21 @@ La dernière commande affiche le secret du jeton (`value`) **une seule fois**. L
 
 ### 8.3 Réseau
 
-1. **Plage d'IP réservée** : la PR n° N reçoit l'IP `10.1.20.(100 + N modulo 10)`, donc la plage 10.1.20.100 à 10.1.20.109. Vérifiez qu'aucune machine ne l'utilise et qu'elle est hors de la plage DHCP de la box. Si besoin, changez `ip_first_host` dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars).
-2. **Twingate** : ajoutez une ressource pour cette plage, par exemple `10.1.20.96/28`, au moins sur le port 8080, ou réutilisez la ressource du sous-réseau si elle existe.
-3. **API Proxmox joignable depuis le runner** :
+1. **Plage d'IP réservée** : la PR n° N reçoit l'IP `10.1.20.(100 + N modulo 10)`, donc la plage 10.1.20.100 à 10.1.20.109. Vérifiez qu'aucune machine ne l'utilise et qu'elle est hors de la plage DHCP : un DHCP est actif sur ce réseau, il a donné .76, .78 et .80 aux VM. Si besoin, changez `ip_first_host` dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars).
+2. **Masque `/8`**, comme staging-1, k8s-1 et k8s-2 (leur `/etc/network/interfaces` n'indique pas de masque, d'où le `/8` par défaut pour une adresse en 10.x). Elles joignent ainsi en direct le connecteur Twingate (10.1.40.3), sans passer par la passerelle 10.1.20.1. Les VM de PR font de même (`ip_prefix_length = 8`).
+3. **Twingate** : la ressource `10.1.20.0/24` couvre déjà la plage, il n'y a rien à ajouter. Sans ressource de sous-réseau, ajoutez `10.1.20.96/28`, au moins sur le port 8080.
+4. **API Proxmox joignable depuis le runner** :
    ```bash
    # staging-1 (bash)
-   curl -sk -o /dev/null -w '%{http_code}\n' https://<IP du Proxmox>:8006/api2/json/version   # attendu : 401
-   ip route | awk '/default/ {print "passerelle :", $3}'
+   curl -sk -o /dev/null -w '%{http_code}\n' https://10.1.98.5:8006/api2/json/version   # attendu : 401 (pas de jeton)
    ```
 
 ### 8.4 Configuration
 
-1. Dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars), renseignez les 3 valeurs `A-RENSEIGNER` : `proxmox_endpoint`, `proxmox_node` et `gateway`. Faites-le dans une branche et une PR, comme toute modification. Tant qu'elles ne sont pas renseignées, Terraform refuse de s'exécuter, avec un message explicite.
-2. Dans GitHub, *Settings > Secrets and variables > Actions* :
-   - secret `PROXMOX_API_TOKEN` = `terraform@pve!ci=<value>` ;
-   - variable `PREVIEW_ENABLED` = `true`. C'est l'interrupteur : supprimez-la, ou mettez-la à `false`, pour revenir au pipeline sans environnement de PR.
+1. [terraform.tfvars](../infra/terraform/preview/terraform.tfvars) contient déjà nos valeurs (API `https://10.1.98.5:8006/`, nœud, stockage, bridge, plage d'IP, passerelle). Sur un autre Proxmox, modifiez-les dans une branche et une PR. Une valeur laissée à `A-RENSEIGNER` est refusée par Terraform, avec un message explicite.
+2. Dans GitHub, sur la page du dépôt, onglet **Settings** (réservé aux administrateurs du dépôt), menu de gauche **Secrets and variables > Actions** :
+   - onglet **Secrets**, bouton **New repository secret** : *Name* `PROXMOX_API_TOKEN`, *Secret* le jeton complet `terraform@pve!ci=<value>` (sans espace ni guillemets), puis **Add secret** ;
+   - onglet **Variables**, bouton **New repository variable** : *Name* `PREVIEW_ENABLED`, *Value* `true`, puis **Add variable**. C'est l'interrupteur : mettez `false` (ou supprimez la variable) pour revenir au pipeline sans environnement de PR.
 
 ✅ **Vérification** :
 - sur une PR, le job **Environnement de test de la PR** est vert ;

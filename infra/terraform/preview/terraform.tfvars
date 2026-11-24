@@ -2,18 +2,21 @@
 # Le jeton API est dans le secret GitHub PROXMOX_API_TOKEN, jamais ici (dépôt public).
 # Mise en place côté Proxmox (template, pool, jeton) : docs/TUTORIEL.md, étape 8.
 
-proxmox_endpoint = "https://A-RENSEIGNER:8006/" # IP du Proxmox, joignable depuis staging-1
-proxmox_node     = "A-RENSEIGNER"               # nom du nœud (arbre de gauche de l'interface)
+proxmox_endpoint = "https://10.1.98.5:8006/" # joignable depuis staging-1 (vérifié : HTTP 401 sans jeton)
+proxmox_node     = "SRV-LVNO-PROD-02"        # nœud qui héberge staging-1, k8s-1 et k8s-2
 
 template_vm_id = 9000               # template Debian 13 cloud-init
 pool_id        = "taskflow-preview" # seul pool sur lequel le jeton a des droits
-datastore_id   = "local-lvm"
+datastore_id   = "syno-lun01"       # LUN iSCSI du Synology
 bridge         = "vmbr0"
 
-# PR n° N -> 10.1.20.(100 + N % 10) : plage 10.1.20.100 à 10.1.20.109, à réserver
-# (hors DHCP, aucune autre machine dessus) et à ajouter comme ressource Twingate.
+# PR n° N -> 10.1.20.(100 + N % 10) : plage 10.1.20.100 à 10.1.20.109, réservée
+# (hors DHCP, aucune autre machine dessus), couverte par la ressource Twingate 10.1.20.0/24.
 ip_cidr       = "10.1.20.0/24"
 ip_first_host = 100
 ip_pool_size  = 10
-gateway       = "A-RENSEIGNER"
-dns_servers   = ["1.1.1.1", "8.8.8.8"]
+# Même masque que staging-1, k8s-1 et k8s-2 (/8) : le connecteur Twingate (10.1.40.3)
+# est joint en direct, sans passer par la passerelle.
+ip_prefix_length = 8
+gateway          = "10.1.20.1"
+dns_servers      = ["8.8.8.8", "1.1.1.1"]

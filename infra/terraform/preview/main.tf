@@ -11,7 +11,7 @@ provider "proxmox" {
 locals {
   name          = "taskflow-pr-${var.pr_number}"
   ip            = cidrhost(var.ip_cidr, var.ip_first_host + (var.pr_number % var.ip_pool_size))
-  prefix_length = split("/", var.ip_cidr)[1]
+  prefix_length = coalesce(var.ip_prefix_length, tonumber(split("/", var.ip_cidr)[1]))
 }
 
 resource "proxmox_virtual_environment_vm" "preview" {
