@@ -246,6 +246,8 @@ jobs:
         env:
           TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
         run: |
+          # Sans pipefail (absent du shell par défaut de GitHub), l'échec de Terraform serait masqué par tee.
+          set -o pipefail
           TF_VAR_ssh_public_key="$(cat "$RUNNER_TEMP/ansible_key.pub")"
           export TF_VAR_ssh_public_key
           # En cas d'échec, l'erreur Terraform est remontée en annotation : visible dans l'onglet Checks de la PR.
@@ -290,6 +292,7 @@ jobs:
 
       - name: Logs de l'application en cas d'échec
         if: failure() && steps.vm.outputs.ip != ''
+        continue-on-error: true # VM injoignable : l'erreur utile est celle de l'étape précédente
         env:
           IP: ${{ steps.vm.outputs.ip }}
         run: >-

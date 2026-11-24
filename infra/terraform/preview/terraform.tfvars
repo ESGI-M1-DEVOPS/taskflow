@@ -9,6 +9,7 @@ template_vm_id = 9000               # template Debian 13 cloud-init
 pool_id        = "taskflow-preview" # seul pool sur lequel le jeton a des droits
 datastore_id   = "syno-lun01"       # LUN iSCSI du Synology
 bridge         = "vmbr0"
+vlan_id        = 20 # comme net0 des autres VM (bridge=vmbr0,tag=20) ; sans tag, la VM est hors du réseau 10.1.20.x
 
 # PR n° N -> 10.1.20.(100 + N % 10) : plage 10.1.20.100 à 10.1.20.109, réservée
 # (hors DHCP, aucune autre machine dessus), couverte par la ressource Twingate 10.1.20.0/24.

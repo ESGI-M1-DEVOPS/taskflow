@@ -45,6 +45,7 @@ jobs:
         env:
           TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
         run: |
+          set -o pipefail # sinon l'échec de Terraform serait masqué par tee
           state="$HOME/taskflow-preview/pr-$PR_NUMBER.tfstate"
           if [ ! -s "$state" ]; then
             echo "Aucun environnement à détruire pour la PR #$PR_NUMBER."

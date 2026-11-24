@@ -320,6 +320,10 @@ Le plus récent en haut. Chaque modification du projet est notée ici.
   - le lint vérifie aussi le format et la validité de la configuration Terraform.
 - Activation par la variable GitHub `PREVIEW_ENABLED`. Jamais pour une PR venant d'un fork.
 - Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LNVO-PROD-02`, stockage `syno-lun01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
+- Problèmes rencontrés pendant la mise au point, sur la PR #12 :
+  - nom du nœud mal orthographié, d'où une erreur HTTP 500 « hostname lookup failed » ; le bon nom vient du certificat de l'API ;
+  - VM sans le tag VLAN 20, donc injoignable ;
+  - le shell par défaut de GitHub n'active pas `pipefail` : l'échec de `terraform apply | tee` passait inaperçu. Les erreurs Terraform sont désormais remontées en annotation dans l'onglet *Checks* de la PR.
 - Tutoriel : nouvelle étape 8 (template, pool et jeton Proxmox limités, plage d'IP, Twingate, secret). L'ancienne étape 8 devient l'étape 9.
 
 ### 24/11/2026 : rôle `worker` affiché pour k8s-2

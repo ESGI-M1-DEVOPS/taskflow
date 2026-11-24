@@ -424,9 +424,10 @@ La dernière commande affiche le secret du jeton (`value`) **une seule fois**. L
 ### 8.3 Réseau
 
 1. **Plage d'IP réservée** : la PR n° N reçoit l'IP `10.1.20.(100 + N modulo 10)`, donc la plage 10.1.20.100 à 10.1.20.109. Vérifiez qu'aucune machine ne l'utilise et qu'elle est hors de la plage DHCP : un DHCP est actif sur ce réseau, il a donné .76, .78 et .80 aux VM. Si besoin, changez `ip_first_host` dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars).
-2. **Masque `/8`**, comme staging-1, k8s-1 et k8s-2 (leur `/etc/network/interfaces` n'indique pas de masque, d'où le `/8` par défaut pour une adresse en 10.x). Elles joignent ainsi en direct le connecteur Twingate (10.1.40.3), sans passer par la passerelle 10.1.20.1. Les VM de PR font de même (`ip_prefix_length = 8`).
-3. **Twingate** : la ressource `10.1.20.0/24` couvre déjà la plage, il n'y a rien à ajouter. Sans ressource de sous-réseau, ajoutez `10.1.20.96/28`, au moins sur le port 8080.
-4. **API Proxmox joignable depuis le runner** :
+2. **VLAN 20** : la carte réseau des VM existantes est en `bridge=vmbr0,tag=20` (*VM > Hardware > Network Device*). Les VM de PR reçoivent le même tag (`vlan_id = 20`). Sans lui, elles démarrent hors du réseau 10.1.20.x et restent injoignables.
+3. **Masque `/8`**, comme staging-1, k8s-1 et k8s-2 (leur `/etc/network/interfaces` n'indique pas de masque, d'où le `/8` par défaut pour une adresse en 10.x). Elles joignent ainsi en direct le connecteur Twingate (10.1.40.3), sans passer par la passerelle 10.1.20.1. Les VM de PR font de même (`ip_prefix_length = 8`).
+4. **Twingate** : la ressource `10.1.20.0/24` couvre déjà la plage, il n'y a rien à ajouter. Sans ressource de sous-réseau, ajoutez `10.1.20.96/28`, au moins sur le port 8080.
+5. **API Proxmox joignable depuis le runner** :
    ```bash
    # staging-1 (bash)
    curl -sk -o /dev/null -w '%{http_code}\n' https://10.1.98.5:8006/api2/json/version   # attendu : 401 (pas de jeton)
@@ -479,6 +480,7 @@ La dernière commande affiche le secret du jeton (`value`) **une seule fois**. L
 | Environnement de PR : Terraform `403 Permission check failed` | jeton créé avec séparation des privilèges, ou droits manquants | étape 8.2 : `--privsep 0`, et les 3 `aclmod` (pool, stockage, SDN) |
 | Environnement de PR : Terraform `HTTP 500 ... hostname lookup '<nœud>' failed` | nom de nœud inexact dans `terraform.tfvars` (sensible à la casse ; vécu : deux lettres inversées) | reprendre le nom affiché dans l'arbre *Datacenter* de Proxmox, ou le `CN` du certificat de `https://<IP>:8006` |
 | Environnement de PR : Terraform `VM 91xx already exists` / `config file already exists` | un run annulé en pleine création a laissé une VM que l'état Terraform ne connaît pas | supprimer la VM 91xx du pool `taskflow-preview` dans Proxmox, puis *Re-run failed jobs* |
+| Environnement de PR : la VM existe mais `No route to host` (ARP `FAILED`) depuis staging-1 | VM sans le tag VLAN 20 | `vlan_id = 20` dans `terraform.tfvars` (étape 8.3) |
 | Environnement de PR : Ansible `UNREACHABLE` sur `pr-<n>` | IP, passerelle ou bridge incorrects dans `terraform.tfvars`, ou template démarré une fois | console de la VM dans Proxmox (`ip a`, `cloud-init status --long`) ; corriger puis relancer |
 | Deux PR se partagent la même IP | PR n° N et N+10 ouvertes en même temps (plage de 10 adresses) | fermer l'une des deux, ou agrandir `ip_pool_size` (et la plage réservée) |
 | Une VM de PR reste après la fermeture de la PR | `PREVIEW_ENABLED` désactivé entre-temps, ou destruction en échec | *Actions > Destruction environnement de PR > Run workflow*, avec le numéro de la PR |

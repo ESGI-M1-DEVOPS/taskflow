@@ -70,6 +70,12 @@ variable "bridge" {
   type        = string
 }
 
+variable "vlan_id" {
+  description = "Tag VLAN de la carte réseau (celui de net0 sur staging-1, k8s-1 et k8s-2) ; null = sans tag."
+  type        = number
+  default     = null
+}
+
 variable "vm_id_base" {
   description = "ID de VM = vm_id_base + numéro de PR (ex. 9100 + 12 = 9112)."
   type        = number

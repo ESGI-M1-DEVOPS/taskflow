@@ -46,7 +46,9 @@ resource "proxmox_virtual_environment_vm" "preview" {
   }
 
   network_device {
-    bridge = var.bridge
+    bridge  = var.bridge
+    vlan_id = var.vlan_id
+    model   = "virtio"
   }
 
   # Pas d'agent QEMU dans l'image cloud Debian : l'IP est fixe, donc connue sans lui.
