@@ -1,0 +1,80 @@
+# Destruction de l'environnement de test d'une pull request (VM Proxmox créée par Terraform).
+#   automatique : à la fermeture de la PR, mergée ou non
+#   manuelle    : Actions > Destruction environnement de PR > Run workflow (numéro de PR)
+name: Destruction environnement de PR
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Numéro de la PR dont il faut détruire l'environnement
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    name: Terraform destroy
+    if: >-
+      vars.PREVIEW_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, proxmox]
+    permissions:
+      contents: read
+      pull-requests: write # mise à jour du commentaire de l'environnement
+    # Même groupe que le job "preview" : si une création est en cours, la destruction l'attend.
+    concurrency:
+      group: preview-pr-${{ github.event.pull_request.number || inputs.pr_number }}
+      cancel-in-progress: false
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+    steps:
+      # Code de la PR elle-même : c'est avec lui que l'environnement a été créé.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Terraform destroy
+        id: destroy
+        env:
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+        run: |
+          set -o pipefail # sinon l'échec de Terraform serait masqué par tee
+          state="$HOME/taskflow-preview/pr-$PR_NUMBER.tfstate"
+          if [ ! -s "$state" ]; then
+            echo "Aucun environnement à détruire pour la PR #$PR_NUMBER."
+            echo "destroyed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! bash infra/terraform/preview/tf.sh "$PR_NUMBER" destroy -auto-approve -no-color 2>&1 | tee "$RUNNER_TEMP/terraform.log"; then
+            summary=$(grep -A8 'Error:' "$RUNNER_TEMP/terraform.log" | sed 's/^[│ ]*//' | grep -v '^$' | tr '\n' ' ' | cut -c1-700)
+            echo "::error title=Terraform destroy::${summary:-voir le log de cette étape}"
+            exit 1
+          fi
+          rm -f "$state" "$state.backup"
+          echo "destroyed=true" >> "$GITHUB_OUTPUT"
+          echo "VM de la PR #$PR_NUMBER détruite."
+
+      - name: Mise à jour du commentaire de la PR
+        if: steps.destroy.outputs.destroyed == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const marker = '<!-- taskflow-preview -->';
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              const when = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id,
+                body: `${marker}\n### Environnement de test de la PR\n\nDétruit le ${when} (terraform destroy) : la VM n'existe plus.`,
+              });
+            }

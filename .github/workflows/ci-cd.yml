@@ -1,5 +1,8 @@
 # Pipeline CI/CD de TaskFlow
-#   PR         : lint + tests + build + smoke test (rien n'est publié)
+#   PR         : lint + tests + build + smoke test
+#                + environnement de test de la PR : VM Proxmox créée par Terraform, configurée
+#                  par Ansible, images taguées pr-<n>-<sha> (si la variable PREVIEW_ENABLED vaut true).
+#                  Détruite à la fermeture de la PR (preview-cleanup.yml).
 #   push main  : idem + push des images GHCR + déploiement staging (auto)
 #                + déploiement production (après validation manuelle sur l'environnement "production")
 name: CI/CD
@@ -70,7 +73,13 @@ jobs:
         run: |
           pipx install ansible-core
           ansible-galaxy collection install -r requirements.yml
-          ansible-playbook --syntax-check playbooks/site.yml playbooks/github-runner.yml
+          ansible-playbook --syntax-check playbooks/site.yml playbooks/github-runner.yml playbooks/preview.yml
+
+      - name: Terraform (format et validation)
+        working-directory: infra/terraform/preview
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint sh hashicorp/terraform:1.17.2 -c \
+            'terraform fmt -check -diff && terraform init -backend=false -input=false > /dev/null && terraform validate'
 
   test:
     name: Tests automatisés
@@ -105,16 +114,34 @@ jobs:
       db_tag: ${{ steps.vars.outputs.db_tag }}
     env:
       SMOKE_DB_PASSWORD: smoke-test
+      # Images publiées : celles de main, et celles d'une PR du dépôt (jamais d'un fork)
+      # quand l'environnement de test des PR est activé.
+      PUBLISH: >-
+        ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') ||
+            (github.event_name == 'pull_request' &&
+             github.event.pull_request.head.repo.full_name == github.repository &&
+             vars.PREVIEW_ENABLED == 'true') }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Calcul des tags
         id: vars
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          if [ -n "$PR_NUMBER" ]; then
+            # PR : tag dédié, base comprise, pour ne jamais écraser une image de main ni "latest"
+            tag="pr-${PR_NUMBER}-${PR_HEAD_SHA::7}"
+            db_tag="$tag"
+          else
+            tag="${GITHUB_SHA::7}"
+            db_tag="$(tr -d '[:space:]' < app/db/VERSION)"
+          fi
           {
             echo "owner=${GITHUB_REPOSITORY_OWNER,,}"
-            echo "tag=${GITHUB_SHA::7}"
-            echo "db_tag=$(tr -d '[:space:]' < app/db/VERSION)"
+            echo "tag=$tag"
+            echo "db_tag=$db_tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build des images (tag = SHA du commit)
@@ -150,7 +177,7 @@ jobs:
         run: docker compose -f compose.yaml logs
 
       - name: Connexion à GitHub Container Registry
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -158,13 +185,156 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publication des images
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: env.PUBLISH == 'true'
         env:
           PREFIX: ${{ env.REGISTRY }}/${{ steps.vars.outputs.owner }}/taskflow
+          TAG: ${{ steps.vars.outputs.tag }}
         run: |
           for component in backend frontend db; do
-            docker push --all-tags "$PREFIX-$component"
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              docker push "$PREFIX-$component:$TAG"       # PR : uniquement pr-<n>-<sha>
+            else
+              docker push --all-tags "$PREFIX-$component" # main : SHA + latest (+ version de la base)
+            fi
           done
+
+  preview:
+    name: Environnement de test de la PR
+    needs: build
+    # Jamais pour un fork : il exécuterait du code inconnu sur le runner du Proxmox.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.PREVIEW_ENABLED == 'true'
+    runs-on: [self-hosted, proxmox]
+    permissions:
+      contents: read
+      pull-requests: write # commentaire avec le lien de l'environnement
+    # Un seul Terraform à la fois par PR (la destruction attend la fin d'une création en cours).
+    concurrency:
+      group: preview-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    environment:
+      name: preview
+      url: ${{ steps.vm.outputs.url }}
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la clé SSH et les secrets Ansible
+        env:
+          SSH_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ansible_key"
+          # Nettoie les défauts de copier-coller (BOM UTF-8, CR Windows, espaces en bord de ligne, lignes vides)
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' | sed -e '1s/^\xEF\xBB\xBF//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' > "$RUNNER_TEMP/ansible_key"
+          if ! ssh-keygen -y -f "$RUNNER_TEMP/ansible_key" > "$RUNNER_TEMP/ansible_key.pub" 2>/dev/null; then
+            echo "::error::Le secret ANSIBLE_SSH_PRIVATE_KEY n'est pas une clé privée SSH valide. Recopier la sortie complète de 'cat ~/.ssh/ansible' (lignes BEGIN et END comprises)."
+            exit 1
+          fi
+          # Grafana n'est pas déployé sur l'environnement de PR : mot de passe inutilisé, mais attendu par le .env.
+          jq -n --arg db "$DB_PASSWORD" --arg reg "$REGISTRY_TOKEN" --arg gf "$(openssl rand -hex 16)" \
+            '{db_password: $db, registry_password: $reg, grafana_admin_password: $gf}' > "$RUNNER_TEMP/secrets.json"
+          chmod 600 "$RUNNER_TEMP/secrets.json"
+
+      - name: Terraform - créer ou mettre à jour la VM de la PR
+        id: vm
+        env:
+          TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
+        run: |
+          # Sans pipefail (absent du shell par défaut de GitHub), l'échec de Terraform serait masqué par tee.
+          set -o pipefail
+          TF_VAR_ssh_public_key="$(cat "$RUNNER_TEMP/ansible_key.pub")"
+          export TF_VAR_ssh_public_key
+          # En cas d'échec, l'erreur Terraform est remontée en annotation : visible dans l'onglet Checks de la PR.
+          if ! bash infra/terraform/preview/tf.sh "$PR_NUMBER" apply -auto-approve -no-color 2>&1 | tee "$RUNNER_TEMP/terraform.log"; then
+            summary=$(grep -A8 'Error:' "$RUNNER_TEMP/terraform.log" | sed 's/^[│ ]*//' | grep -v '^$' | tr '\n' ' ' | cut -c1-700)
+            echo "::error title=Terraform apply::${summary:-voir le log de cette étape}"
+            exit 1
+          fi
+          ip=$(bash infra/terraform/preview/tf.sh "$PR_NUMBER" output -raw ip)
+          vm=$(bash infra/terraform/preview/tf.sh "$PR_NUMBER" output -raw vm_name)
+          {
+            echo "ip=$ip"
+            echo "vm=$vm"
+            echo "url=http://$ip:8080"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collections Ansible
+        working-directory: infra/ansible
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Ansible - Docker et application sur la VM de la PR
+        working-directory: infra/ansible
+        run: >-
+          ansible-playbook playbooks/preview.yml
+          --private-key "$RUNNER_TEMP/ansible_key"
+          -e @"$RUNNER_TEMP/secrets.json"
+          -e pr_number="$PR_NUMBER"
+          -e preview_ip=${{ steps.vm.outputs.ip }}
+          -e image_owner=${{ needs.build.outputs.owner }}
+          -e image_tag="$TAG"
+          -e db_image_tag=${{ needs.build.outputs.db_tag }}
+
+      - name: Tests de l'environnement de la PR
+        env:
+          URL: ${{ steps.vm.outputs.url }}
+        run: |
+          curl -fsS "$URL/api/version" | tee /dev/stderr | grep -q "\"$TAG\""
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{"title":"test environnement PR"}' "$URL/api/tasks" > /dev/null
+          curl -fsS "$URL/api/tasks" | grep -q "test environnement PR"
+          curl -fsS "$URL/" | grep -q "TaskFlow"
+          echo "Environnement de la PR #$PR_NUMBER opérationnel : $URL (version $TAG)"
+
+      - name: Logs de l'application en cas d'échec
+        if: failure() && steps.vm.outputs.ip != ''
+        continue-on-error: true # VM injoignable : l'erreur utile est celle de l'étape précédente
+        env:
+          IP: ${{ steps.vm.outputs.ip }}
+        run: >-
+          ssh -i "$RUNNER_TEMP/ansible_key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout=10 "admin@$IP"
+          'cd /opt/taskflow/deploy/compose 2>/dev/null && sudo docker compose logs --tail 100 || sudo cloud-init status --long'
+
+      - name: Lien de l'environnement dans la PR
+        uses: actions/github-script@v8
+        env:
+          URL: ${{ steps.vm.outputs.url }}
+          VM: ${{ steps.vm.outputs.vm }}
+        with:
+          script: |
+            const marker = '<!-- taskflow-preview -->';
+            const body = [
+              marker,
+              '### Environnement de test de la PR',
+              '',
+              `Application : ${process.env.URL} (Twingate connecté)`,
+              '',
+              '| | |',
+              '|---|---|',
+              `| Version | \`${process.env.TAG}\` |`,
+              `| VM Proxmox | \`${process.env.VM}\` (Terraform) |`,
+              `| Mis à jour | ${new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })} |`,
+              '',
+              'Mis à jour à chaque push sur la PR, détruit automatiquement à sa fermeture.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Nettoyage des secrets
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ansible_key" "$RUNNER_TEMP/ansible_key.pub" "$RUNNER_TEMP/secrets.json"
 
   deploy-staging:
     name: Déploiement staging

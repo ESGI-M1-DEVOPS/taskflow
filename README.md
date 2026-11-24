@@ -13,8 +13,9 @@ Documentation :
 | Conteneurs | 1 Dockerfile par composant, images non-root, publiées sur GHCR en **privé** (lecture par jeton) |
 | Staging | Docker Compose sur une VM dédiée |
 | Production | Kubernetes k3s sur 2 VM, application packagée en chart Helm |
-| IaC | Ansible : de la VM vierge au cluster supervisé + application déployée |
+| IaC | Ansible : de la VM vierge au cluster supervisé + application déployée. Terraform : VM temporaires des pull requests |
 | CI/CD | GitHub Actions : lint, tests, build, smoke test, push, staging, production |
+| Test avant intégration | Chaque pull request obtient sa propre VM Proxmox, créée par Terraform et configurée par Ansible, puis détruite à la fermeture de la PR |
 | Zero-downtime | Rolling update (maxUnavailable 0), probes, arrêt gracieux, PDB, rollback automatique |
 | Auto-scaling | HorizontalPodAutoscaler sur le CPU (2 à 6 pods backend) |
 | Observabilité | Prometheus, Grafana (dashboard des 4 golden signals), cAdvisor, Alertmanager |
@@ -66,11 +67,13 @@ deploy/
   helm/taskflow/      production : chart Helm (Deployments, HPA, PDB, StatefulSet, Ingress, ServiceMonitor, dashboard)
   k8s/                générateur de charge pour la démo d'auto-scaling
 infra/ansible/
-  playbooks/          site (tout), bootstrap (python3/sudo), deploy-staging, deploy-prod, github-runner
+  playbooks/          site (tout), bootstrap (python3/sudo), deploy-staging, deploy-prod, github-runner, preview
   roles/              common, docker, k3s_server, k3s_agent, helm, monitoring, app_staging, app_prod, github_runner
   inventories/        hosts.yml (3 VM) + group_vars (versions figées, registry, NodePorts…)
+infra/terraform/
+  preview/            VM Proxmox temporaire d'une PR (provider bpg/proxmox) + tf.sh (Terraform en conteneur)
 .github/
-  workflows/          pipeline CI/CD
+  workflows/          pipeline CI/CD, destruction des environnements de PR
   actionlint.yaml     configuration du lint des workflows (label du runner)
 scripts/              sonde de disponibilité (démo zero-downtime), installation d'Ansible
 docs/                 tutoriel de mise en place, scénario de démo, contrat d'intégration
@@ -114,6 +117,7 @@ Accès, via Twingate :
 | Application de staging | http://10.1.20.72:8080 |
 | Grafana de staging | http://10.1.20.72:3000 |
 | Application d'une autre équipe, hébergée à la main sur k8s-2, hors IaC ([démo 8](docs/DEMO-LIGHT.md#8-héberger-lapplication-dune-autre-équipe-3-min)) | http://10.1.20.74:8081 |
+| Environnement de test d'une PR (lien publié dans la PR) | http://10.1.20.(100 + n° de PR modulo 10):8080, par ex. PR #12 → http://10.1.20.102:8080 |
 
 ## Pipeline CI/CD
 
@@ -132,19 +136,38 @@ flowchart LR
   A[lint<br/>ESLint · npm audit · hadolint<br/>helm lint · compose · ansible] --> C
   B[tests<br/>node:test + supertest] --> C
   C[build<br/>3 images taguées SHA<br/>smoke test compose] -->|main uniquement| D[push GHCR]
+  C -->|pull request| P[environnement de la PR<br/>push GHCR pr-n-sha<br/>Terraform : VM Proxmox<br/>Ansible + compose · tests · lien]
+  P -.->|fermeture de la PR| X[terraform destroy]
   D --> E[staging<br/>refus version obsolète<br/>validation clé SSH<br/>Ansible + compose · vérif. version]
   E -->|approbation| F[production<br/>refus version obsolète<br/>Ansible + Helm --atomic<br/>smoke test + rollback · vérif. Ingress]
 ```
 
 - **Branche `main` protégée** (ruleset `protection-main`) : toute modification passe par une pull request **approuvée par un autre membre**, avec les 3 checks verts (lint, tests, build). Une nouvelle approbation est exigée après tout nouveau push. Force push et suppression de `main` sont interdits.
 - **Images privées** : la CI publie sur GHCR avec son `GITHUB_TOKEN`. Les serveurs les téléchargent avec un jeton classique en lecture seule (`read:packages`), via `docker login` sur le staging et un secret `docker-registry` créé par la chart en production.
-- **Pull request** : lint, tests, build et smoke test. Rien n'est publié ni déployé.
+- **Pull request** : lint, tests, build et smoke test, puis un **environnement de test dédié** à la PR (section suivante). Rien n'est déployé en staging ni en production.
 - **Merge sur `main`** : le pipeline complet. Chaque image porte le SHA du commit : une version est identifiable de bout en bout (pipeline, registry, pied de page de l'interface, logs).
 - **Exécution** : les jobs de déploiement tournent sur le runner self-hosted et appellent les **mêmes playbooks Ansible** que ceux utilisés à la main. Il n'y a pas de logique de déploiement cachée dans la CI.
 - **Garde-fous des jobs de déploiement** :
   - refus si le commit n'est plus le dernier de `main` : une relance d'un ancien run ne peut pas ramener la production en arrière ;
   - nettoyage et validation de la clé SSH du secret, avec affichage de son empreinte ;
   - en production, smoke test frontend → backend → BDD après Helm, avec `helm rollback` automatique en cas d'échec.
+
+### Environnement de test de chaque pull request (Terraform)
+
+Avant d'être intégrée, chaque PR est déployée sur **sa propre VM**, que le relecteur peut ouvrir. Mise en place côté Proxmox : [TUTORIEL.md, étape 8](docs/TUTORIEL.md#étape-8--environnement-de-test-des-pull-requests-terraform--30-min).
+
+1. **Build** : les images de la PR sont publiées sur GHCR avec le tag `pr-<n>-<sha>`. Elles n'écrasent jamais `latest`, ni une image de `main`, ni le tag de version de la base.
+2. **Terraform** ([infra/terraform/preview](infra/terraform/preview)) clone un template Debian 13 cloud-init en une VM `taskflow-pr-<n>` (ID 9100 + n, IP fixe 10.1.20.(100 + n modulo 10)), avec la clé SSH de la CI.
+3. **Ansible** ([playbooks/preview.yml](infra/ansible/playbooks/preview.yml)) y applique les **mêmes rôles que le staging** : `common`, `docker`, `app_staging` (sans le monitoring).
+4. **Tests** : version servie, écriture et lecture d'une tâche, page d'accueil. Le lien est publié en commentaire dans la PR et sur le bouton *View deployment* (environnement GitHub `preview`).
+5. **Chaque nouveau push** met à jour la même VM (Terraform ne change rien, Ansible déploie la nouvelle version). **À la fermeture de la PR**, mergée ou non, le workflow [preview-cleanup.yml](.github/workflows/preview-cleanup.yml) lance `terraform destroy`.
+
+Choix et garde-fous :
+- **Jeton Proxmox limité** au pool `taskflow-preview` : il ne peut ni voir ni toucher les VM de staging et de production.
+- **Jamais pour un fork** : le code d'un inconnu ne s'exécute pas sur le runner du réseau Proxmox.
+- **Un état Terraform par PR**, conservé sur le runner (`~/taskflow-preview/pr-<n>.tfstate`). Création et destruction d'une même PR ne s'exécutent jamais en même temps (groupe de concurrence commun).
+- **Terraform en conteneur**, version figée (`hashicorp/terraform:1.17.2`), provider verrouillé par `.terraform.lock.hcl` : rien à installer sur le runner.
+- **Interrupteur** : la variable GitHub `PREVIEW_ENABLED` (`true` pour activer). Sans elle, les PR suivent le pipeline habituel.
 
 ## Zero-downtime et auto-scaling
 
@@ -286,6 +309,22 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 24/11/2026 : environnement de test de chaque pull request (Terraform)
+- Nouveau dossier `infra/terraform/preview` : une VM Proxmox par PR, clonée depuis un template Debian 13 cloud-init (provider `bpg/proxmox` 0.123, Terraform 1.17.2 lancé en conteneur par `tf.sh`, état local par PR sur le runner).
+- Nouveau playbook `preview.yml` : les rôles `common`, `docker` et `app_staging` appliqués à cette VM.
+- Pipeline :
+  - sur une PR, les images sont publiées avec le tag `pr-<n>-<sha>` ;
+  - nouveau job « Environnement de test de la PR » (Terraform, Ansible, tests, lien en commentaire) ;
+  - nouveau workflow `preview-cleanup.yml`, qui lance `terraform destroy` à la fermeture de la PR ou à la demande ;
+  - le lint vérifie aussi le format et la validité de la configuration Terraform.
+- Activation par la variable GitHub `PREVIEW_ENABLED`. Jamais pour une PR venant d'un fork.
+- Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LNVO-PROD-02`, stockage `SYNO-LUN-01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
+- Problèmes rencontrés pendant la mise au point, sur la PR #12 :
+  - nom du nœud mal orthographié, d'où une erreur HTTP 500 « hostname lookup failed » ; le bon nom vient du certificat de l'API ;
+  - VM sans le tag VLAN 20, donc injoignable ;
+  - le shell par défaut de GitHub n'active pas `pipefail` : l'échec de `terraform apply | tee` passait inaperçu. Les erreurs Terraform sont désormais remontées en annotation dans l'onglet *Checks* de la PR.
+- Tutoriel : nouvelle étape 8 (template, pool et jeton Proxmox limités, plage d'IP, Twingate, secret). L'ancienne étape 8 devient l'étape 9.
 
 ### 24/11/2026 : rôle `worker` affiché pour k8s-2
 - `kubectl get nodes` affichait `<none>` comme rôle de k8s-2 : k3s n'étiquette que le control-plane. Le rôle `k3s_agent` pose désormais le label `node-role.kubernetes.io/worker=true`, depuis le serveur, car le kubelet n'a pas le droit de se le donner lui-même. La tâche est idempotente (`--overwrite`, `changed` seulement si le label manquait).
