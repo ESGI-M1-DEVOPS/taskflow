@@ -4,7 +4,7 @@ Projet DevOps / SysOps ESGI M1 (cours DevOps de Tom AVENEL). Une application web
 
 Documentation :
 - [Tutoriel de mise en place](docs/TUTORIEL.md)
-- [Scénario de soutenance](docs/DEMO.md)
+- [Scénario de soutenance](docs/DEMO.md) et sa [version courte](docs/DEMO-LIGHT.md)
 - [Contrat d'intégration inter-équipes](docs/CONTRAT-INTEGRATION.md)
 - [Journal des modifications](#journal-des-modifications)
 
@@ -24,29 +24,29 @@ Documentation :
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  dev[Développeur] -->|git push| gh[GitHub]
-  gh --> ci[GitHub Actions<br/>lint · tests · build · smoke test]
-  ci -->|push images| ghcr[(GHCR)]
-  ci -->|jobs de déploiement| runner[Runner self-hosted<br/>VM staging]
+### Les machines
 
-  subgraph proxmox[Proxmox]
-    runner -->|Ansible| staging[VM staging<br/>docker compose]
-    runner -->|Ansible + Helm| k1
-    subgraph prod[Cluster k3s production]
-      k1[k8s-1 control-plane] --- k2[k8s-2 worker]
-    end
-  end
+![Les 3 VM : staging-1 pilote tout, la production tourne sur deux nœuds k3s](docs/images/schema-machines.png)
 
-  ghcr -.pull.-> staging
-  ghcr -.pull.-> prod
-  user[Utilisateur<br/>via Twingate] -->|HTTP :80| ingress[Traefik Ingress]
-  ingress --> front[frontend nginx ×2..4] -->|/api| back[backend Node.js ×2..6] --> db[(PostgreSQL)]
-  prom[Prometheus] -.scrape /metrics.-> back
-  alloy[Alloy] -.logs.-> loki[(Loki)]
-  graf[Grafana] --> prom & loki
-```
+- **GitHub** héberge le code (PR relues), le pipeline (GitHub Actions) et les images (GHCR, en privé).
+- **Proxmox** héberge 3 VM KVM Debian 13, joignables uniquement par Twingate.
+- **staging-1** a trois rôles :
+  - l'environnement de staging, en docker compose ;
+  - le runner GitHub Actions self-hosted, qui va chercher les jobs chez GitHub (connexion sortante, aucun port à ouvrir) ;
+  - le poste d'administration Ansible, qui configure les autres VM.
+- **k8s-1** (control-plane) et **k8s-2** (worker) forment le cluster k3s de production. Les replicas de l'application sont répartis sur les deux nœuds.
+
+### Du commit à la requête
+
+![Du commit à la requête : livraison, exécution et supervision](docs/images/schema-infrastructure.png)
+
+1. **Livraison** : GitHub Actions teste et construit l'application, puis publie les images sur GHCR.
+2. **Déploiement** : le runner exécute les jobs de déploiement, avec Ansible pour le staging, puis Ansible et Helm pour la production.
+3. **Exécution** : Traefik (Ingress) → frontend nginx (2 à 4 pods) → backend Node.js (2 à 6 pods) → PostgreSQL (StatefulSet, volume persistant).
+4. **Supervision** :
+   - Prometheus relève `/metrics` toutes les 15 s ;
+   - Alloy collecte les logs de tous les pods et les envoie à Loki ;
+   - Grafana affiche les métriques et les logs.
 
 | Composant | Techno | Port | Rôle |
 |---|---|---|---|
@@ -113,8 +113,19 @@ Accès, via Twingate :
 | Prometheus de production | http://10.1.20.73:30090 |
 | Application de staging | http://10.1.20.72:8080 |
 | Grafana de staging | http://10.1.20.72:3000 |
+| Application d'une autre équipe, hébergée à la main sur k8s-2, hors IaC ([démo 8](docs/DEMO-LIGHT.md#8-héberger-lapplication-dune-autre-équipe-3-min)) | http://10.1.20.74:8081 |
 
 ## Pipeline CI/CD
+
+![Deux validations humaines encadrent le chemin vers la production](docs/images/schema-cicd.png)
+
+Deux validations humaines encadrent le chemin vers la production :
+- la **relecture de la PR** par un autre membre ;
+- l'**approbation** du déploiement en production.
+
+Entre les deux, tout est automatique.
+
+Détail des jobs :
 
 ```mermaid
 flowchart LR
@@ -150,7 +161,7 @@ flowchart LR
 | HPA CPU 60 % : backend 2→6 pods, frontend 2→4 pods ; metrics-server inclus dans k3s | templates backend et frontend |
 | La BDD a son propre cycle de version : un déploiement applicatif ne redémarre pas PostgreSQL | `db.imageTag`, [app/db/VERSION](app/db/VERSION) |
 
-**Mesuré en production réelle** : 0 erreur sur 285 puis 349 requêtes pendant deux rolling updates déclenchés par la CI.
+**Mesuré en production réelle** : 0 erreur sur 285, 349 puis 778 requêtes pendant trois rolling updates déclenchés par la CI.
 
 Limite assumée, conformément au sujet (pas de haute disponibilité demandée) : PostgreSQL est une instance unique. Sa mise à jour provoque une courte indisponibilité.
 
@@ -275,6 +286,11 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 24/11/2026 : schémas d'architecture dans le README
+- Le README devient le livrable d'explication du projet. Trois schémas sont ajoutés dans `docs/images/` : les machines, le parcours du commit à la requête et le pipeline CI/CD. Chacun est suivi d'un mode de lecture.
+- Le schéma Mermaid de l'architecture est remplacé par sa version redessinée. Celui du pipeline est conservé pour le détail des jobs.
+- Ajouts : l'accès à l'application de l'autre équipe et la mesure de zero-downtime de la PR #7 (778 requêtes, 0 erreur).
 
 ### 24/11/2026 : hébergement de l'application d'une autre équipe
 - À la demande du prof, l'application `len84/qrcode-generator:1.0` tourne sur k8s-2 en docker compose, sur http://10.1.20.74:8081. Elle est volontairement hors de l'IaC : Docker a été installé à la main, et sera retiré après la soutenance.
