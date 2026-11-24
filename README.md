@@ -260,7 +260,8 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 
 - [docs/TUTORIEL.md](docs/TUTORIEL.md) : la mise en place pas à pas, des VM vierges au premier déploiement continu.
 - [docs/CONTRAT-INTEGRATION.md](docs/CONTRAT-INTEGRATION.md) : la spécification commune proposée aux autres équipes, côté conteneurs (DevOps) et côté plateforme (SysOps).
-- [docs/DEMO.md](docs/DEMO.md) : la fiche d'exécution de la soutenance. Pour chaque démo : le critère visé, le terminal à utiliser, les commandes exactes, le résultat attendu et la remise en état.
+- [docs/DEMO-LIGHT.md](docs/DEMO-LIGHT.md) : la démo courte retenue pour la soutenance (démos 1, 2.1, 3 + 4, 6, 7, et 8 : l'application d'une autre équipe hébergée sur k8s-2), avec un déroulé minuté.
+- [docs/DEMO.md](docs/DEMO.md) : la fiche d'exécution complète de la soutenance. Pour chaque démo : le critère visé, le terminal à utiliser, les commandes exactes, le résultat attendu et la remise en état.
 
 ## Répartition des rôles
 
@@ -274,6 +275,18 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 24/11/2026 : hébergement de l'application d'une autre équipe
+- À la demande du prof, l'application `len84/qrcode-generator:1.0` tourne sur k8s-2 en docker compose, sur http://10.1.20.74:8081. Elle est volontairement hors de l'IaC : Docker a été installé à la main, et sera retiré après la soutenance.
+- Précautions, car Traefik tourne sur k8s-2 : Docker n'écrit aucune règle iptables (`"iptables": false`, port servi par `docker-proxy`), son paquet iptables est le même que celui de k3s (1.8.11, `nf_tables`), il est installé sans AppArmor (`--no-install-recommends`) et ses plages d'adresses ont été vérifiées. Résultat : 528 requêtes vers la production pendant l'installation, 0 erreur.
+- `docs/DEMO-LIGHT.md` : nouvelle démo 8, qui explique cette installation (tableau TaskFlow / application invitée, précautions, commandes, retrait).
+
+### 24/11/2026 : démo courte et fonctionnalité de démonstration
+- `docs/DEMO-LIGHT.md` : la démo retenue avec le prof (démos 1, 2.1, 3 + 4, 6, 7), en ~18 min.
+  - Déroulé minuté : les 4 golden signals sont présentés pendant que le pipeline de la fonctionnalité tourne.
+  - L'auto-scaling est observé en direct dans Grafana, signal par signal.
+- Fonctionnalité de démonstration prête sur la branche `feature/compteur-taches` (compteur de tâches restantes, 2 lignes dans le frontend). Elle n'est volontairement pas mergée : la PR sera approuvée et mergée en soutenance.
+- Préparation des démos : vérifier qu'aucun run de `main` n'attend d'approbation. Le pipeline n'exécute qu'un run à la fois par branche : un run en attente bloquerait celui de la démo.
 
 ### 24/11/2026 : scénario de démo en fiche d'exécution
 - `docs/DEMO.md` réécrit :

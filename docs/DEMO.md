@@ -99,7 +99,7 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
    Attendu : 3 × `SUCCESS`.
 
-5. **Dernier pipeline de `main` vert** dans l'onglet GitHub Actions.
+5. **Dernier pipeline de `main` vert**, et **aucun run en attente d'approbation**, dans l'onglet GitHub Actions. Le pipeline n'exécute qu'un run à la fois sur `main` : un run qui attend « Review deployments » bloquerait celui de la démo 4. S'il y en a un, l'approuver, ou le rejeter avec **Review deployments > Reject**.
 
 6. **Quelques tâches dans l'application.** Terminal **LOCAL** :
 
