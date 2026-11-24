@@ -27,6 +27,7 @@ function showError(message) {
 function render(tasks) {
   list.replaceChildren();
   empty.hidden = tasks.length > 0;
+  document.getElementById('remaining').textContent = `${tasks.filter((t) => !t.done).length} tâche(s) restante(s)`;
   for (const task of tasks) {
     const li = document.createElement('li');
     li.className = task.done ? 'task done' : 'task';
