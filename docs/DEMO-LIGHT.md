@@ -52,7 +52,7 @@ Onglets du navigateur :
    kubectl -n taskflow get hpa
    ```
 
-   Attendu : 2 nœuds `Ready`, tous les pods `Running`, des pourcentages de CPU (pas `<unknown>`).
+   Attendu : 2 nœuds `Ready` (k8s-1 `control-plane`, k8s-2 `worker`), tous les pods `Running`, des pourcentages de CPU (pas `<unknown>`).
 
 3. **Aucun run de `main` en attente d'approbation** dans GitHub Actions. Le pipeline n'exécute qu'un run à la fois sur `main` : un run qui attend « Review deployments » bloquerait celui de la démo en file d'attente. S'il y en a un, l'approuver, ou cliquer sur **Review deployments > Reject**.
 

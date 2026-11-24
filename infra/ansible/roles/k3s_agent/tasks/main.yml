@@ -23,3 +23,15 @@
   retries: 30
   delay: 10
   changed_when: false
+
+# k3s n'étiquette que le control-plane : sans ce label, `kubectl get nodes` affiche
+# <none> dans la colonne ROLES du worker. Le label est purement informatif (le scheduler
+# ne l'utilise pas). Le kubelet n'a pas le droit de poser lui-même un label
+# node-role.kubernetes.io/* (option --node-label refusée), d'où la pose depuis le serveur.
+- name: Afficher le rôle worker dans kubectl get nodes
+  ansible.builtin.command: >-
+    k3s kubectl label node {{ ansible_facts['hostname'] }}
+    node-role.kubernetes.io/worker=true --overwrite
+  delegate_to: "{{ groups['k3s_server'][0] }}"
+  register: worker_label
+  changed_when: "'not labeled' not in worker_label.stdout"
