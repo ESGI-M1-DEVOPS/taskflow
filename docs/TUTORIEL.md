@@ -388,7 +388,7 @@ C'est le circuit à suivre pour **toute** modification.
 - [ ] **Changer le mot de passe du compte `admin`** sur les 3 VM (`passwd`) : c'est un mot de passe par défaut. Ansible et la CI n'en ont plus besoin, ils passent par la clé SSH et sudo sans mot de passe.
 - [ ] Répéter le déroulé de [DEMO.md](DEMO.md) au moins une fois, chronomètre en main.
 - [ ] **Enregistrer une vidéo de secours** de la démo complète (Win+G ou OBS) au cas où le réseau ou Twingate ferait défaut le jour J.
-- [ ] Préparer la branche de fonctionnalité à merger en direct (étape 4 de DEMO.md).
+- [ ] Répéter la démo 4 de [DEMO.md](DEMO.md) (compteur de tâches restantes) jusqu'au merge, puis supprimer la branche, comme indiqué dans la section « Remise en état ».
 - [ ] Remplir la répartition des rôles dans le [README](../README.md).
 - [ ] Le matin même : Twingate connecté, VM allumées, pipeline vert, Grafana ouvert sur le dashboard.
 - [ ] **Après la soutenance** : supprimer le jeton GHCR (*Settings > Developer settings > Tokens (classic)*), qui n'expire pas.
