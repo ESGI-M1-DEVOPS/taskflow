@@ -319,7 +319,7 @@ Le plus récent en haut. Chaque modification du projet est notée ici.
   - nouveau workflow `preview-cleanup.yml`, qui lance `terraform destroy` à la fermeture de la PR ou à la demande ;
   - le lint vérifie aussi le format et la validité de la configuration Terraform.
 - Activation par la variable GitHub `PREVIEW_ENABLED`. Jamais pour une PR venant d'un fork.
-- Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LNVO-PROD-02`, stockage `syno-lun01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
+- Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LNVO-PROD-02`, stockage `SYNO-LUN-01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
 - Problèmes rencontrés pendant la mise au point, sur la PR #12 :
   - nom du nœud mal orthographié, d'où une erreur HTTP 500 « hostname lookup failed » ; le bon nom vient du certificat de l'API ;
   - VM sans le tag VLAN 20, donc injoignable ;

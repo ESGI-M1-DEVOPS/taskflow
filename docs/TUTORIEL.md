@@ -387,7 +387,7 @@ C'est le circuit à suivre pour **toute** modification.
 
 À chaque PR, le pipeline crée une VM Proxmox avec Terraform, Ansible y déploie la version de la PR, et le lien est publié dans la PR. À la fermeture de la PR, la VM est détruite. Fonctionnement détaillé : [README, Pipeline CI/CD](../README.md#environnement-de-test-de-chaque-pull-request-terraform).
 
-Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox `SRV-LNVO-PROD-02` (*Datacenter > SRV-LNVO-PROD-02 > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les VM de PR utilisent le stockage `syno-lun01` (LUN iSCSI du Synology) et le bridge `vmbr0`. Sur un autre Proxmox, prenez les valeurs des VM existantes (*VM > Hardware*).
+Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox `SRV-LNVO-PROD-02` (*Datacenter > SRV-LNVO-PROD-02 > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les VM de PR utilisent le stockage `SYNO-LUN-01` (LUN iSCSI du Synology) et le bridge `vmbr0`. Sur un autre Proxmox, prenez les valeurs des VM existantes (*VM > Hardware*).
 
 ### 8.1 Template Debian 13 cloud-init
 
@@ -398,8 +398,8 @@ cd /tmp && wget -q https://cloud.debian.org/images/cloud/trixie/latest/debian-13
 qm create 9000 --name debian13-cloud-template --pool taskflow-preview --ostype l26 \
   --cores 2 --memory 2048 --cpu x86-64-v2-AES --scsihw virtio-scsi-single \
   --net0 virtio,bridge=vmbr0 --serial0 socket --vga serial0
-qm set 9000 --scsi0 syno-lun01:0,import-from=/tmp/debian-13-genericcloud-amd64.qcow2,discard=on
-qm set 9000 --ide2 syno-lun01:cloudinit --boot order=scsi0
+qm set 9000 --scsi0 SYNO-LUN-01:0,import-from=/tmp/debian-13-genericcloud-amd64.qcow2,discard=on
+qm set 9000 --ide2 SYNO-LUN-01:cloudinit --boot order=scsi0
 qm template 9000
 rm /tmp/debian-13-genericcloud-amd64.qcow2
 ```
@@ -414,7 +414,7 @@ Le jeton n'a de droits **que sur le pool `taskflow-preview`** : il ne peut ni vo
 # Proxmox (shell root du nœud)
 pveum user add terraform@pve --comment "TaskFlow : environnements de PR (Terraform, CI)"
 pveum aclmod /pool/taskflow-preview -user terraform@pve -role PVEVMAdmin
-pveum aclmod /storage/syno-lun01 -user terraform@pve -role PVEDatastoreUser
+pveum aclmod /storage/SYNO-LUN-01 -user terraform@pve -role PVEDatastoreUser
 pveum aclmod /sdn/zones/localnetwork -user terraform@pve -role PVESDNUser   # Proxmox 8 et plus
 pveum user token add terraform@pve ci --privsep 0
 ```

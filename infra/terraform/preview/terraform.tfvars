@@ -7,7 +7,7 @@ proxmox_node     = "SRV-LNVO-PROD-02"        # nom exact du nœud (CN de son cer
 
 template_vm_id = 9000               # template Debian 13 cloud-init
 pool_id        = "taskflow-preview" # seul pool sur lequel le jeton a des droits
-datastore_id   = "syno-lun01"       # LUN iSCSI du Synology
+datastore_id   = "SYNO-LUN-01"      # LUN iSCSI du Synology (nom exact, sensible à la casse)
 bridge         = "vmbr0"
 vlan_id        = 20 # comme net0 des autres VM (bridge=vmbr0,tag=20) ; sans tag, la VM est hors du réseau 10.1.20.x
 
