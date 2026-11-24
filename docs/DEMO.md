@@ -27,7 +27,7 @@ Tous ont été mesurés le 23/11/2026 :
 | Mesure | Résultat |
 |---|---|
 | Reconstruction complète depuis 3 VM Debian 13 vierges (`site.yml`) | ~10 min, `failed=0` |
-| Rolling update en **production réelle** déclenché par la CI, sondé toutes les 0,3 s | 285 puis 349 requêtes, **0 erreur** |
+| Rolling update en **production réelle** déclenché par la CI, sondé toutes les 0,3 s | 285, 349 puis 778 requêtes, **0 erreur** |
 | Déploiement d'une image inexistante | rollback automatique, **0 erreur** côté utilisateurs |
 | Auto-scaling sous charge | 2 → 6 pods backend en ~45 s |
 | Tests automatisés backend | 16/16 |
