@@ -248,7 +248,12 @@ jobs:
         run: |
           TF_VAR_ssh_public_key="$(cat "$RUNNER_TEMP/ansible_key.pub")"
           export TF_VAR_ssh_public_key
-          bash infra/terraform/preview/tf.sh "$PR_NUMBER" apply -auto-approve
+          # En cas d'échec, l'erreur Terraform est remontée en annotation : visible dans l'onglet Checks de la PR.
+          if ! bash infra/terraform/preview/tf.sh "$PR_NUMBER" apply -auto-approve -no-color 2>&1 | tee "$RUNNER_TEMP/terraform.log"; then
+            summary=$(grep -A8 'Error:' "$RUNNER_TEMP/terraform.log" | sed 's/^[│ ]*//' | grep -v '^$' | tr '\n' ' ' | cut -c1-700)
+            echo "::error title=Terraform apply::${summary:-voir le log de cette étape}"
+            exit 1
+          fi
           ip=$(bash infra/terraform/preview/tf.sh "$PR_NUMBER" output -raw ip)
           vm=$(bash infra/terraform/preview/tf.sh "$PR_NUMBER" output -raw vm_name)
           {
