@@ -38,7 +38,8 @@ spec:
       containers:
         - name: frontend
           image: {{ include "taskflow.image" (dict "ctx" . "component" "frontend") }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # "latest" désigne une image qui change : toujours la retélécharger (jamais une vieille copie en cache).
+          imagePullPolicy: {{ eq (toString .Values.image.tag) "latest" | ternary "Always" .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.frontend.port }}

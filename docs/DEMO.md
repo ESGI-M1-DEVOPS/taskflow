@@ -44,7 +44,7 @@ Tous ont été mesurés le 23/11/2026 :
   ```bash
   ansible-playbook playbooks/site.yml -e @secrets.yml
   ```
-  Le récapitulatif affiche `failed=0` et presque uniquement des `ok` : c'est l'idempotence.
+  Le récapitulatif affiche `failed=0` et presque uniquement des `ok` : c'est l'idempotence. Sans `-e image_tag`, la version de l'application déjà déployée est **conservée** : la relance ne change pas ce que servent la production et le staging.
 - Montrer la vidéo d'une reconstruction complète depuis des VM vierges, ou détruire puis recréer le worker en direct :
   ```bash
   ssh 10.1.20.74 sudo /usr/local/bin/k3s-agent-uninstall.sh       # le worker quitte le cluster

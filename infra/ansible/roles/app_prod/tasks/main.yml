@@ -1,3 +1,25 @@
+# Version à déployer : celle passée explicitement (-e image_tag=<sha>, toujours le cas en CI),
+# sinon celle DÉJÀ en production. Relancer site.yml ne change donc jamais la version servie
+# (vécu : une relance de site.yml avait redéployé une ancienne image "latest" restée en cache).
+- name: Lire la version actuellement déployée
+  ansible.builtin.command: >-
+    helm get values taskflow --namespace {{ app_namespace }}
+    --kubeconfig {{ k3s_kubeconfig }} --output json
+  register: current_release
+  changed_when: false
+  failed_when: false
+  when: image_tag | default('') | length == 0
+
+- name: Choisir la version à déployer
+  ansible.builtin.set_fact:
+    deploy_tag: "{{ image_tag if (image_tag | default('') | length > 0) else (current_values.image.tag | default('latest')) }}"
+  vars:
+    current_values: "{{ ((current_release.stdout | default('', true)) or '{}') | from_json | default({}, true) }}"
+
+- name: Version qui va être déployée
+  ansible.builtin.debug:
+    msg: "image_tag={{ deploy_tag }} ({{ 'demandée' if (image_tag | default('') | length > 0) else 'conservée : version déjà déployée' }})"
+
 - name: Supprimer l'ancienne copie de la chart
   ansible.builtin.file:
     path: "{{ prod_chart_dir }}"
@@ -30,7 +52,7 @@
       image:
         registry: "{{ registry }}"
         owner: "{{ image_owner }}"
-        tag: "{{ image_tag }}"
+        tag: "{{ deploy_tag }}"
       # Images privées : la chart crée le secret docker-registry si le jeton est fourni.
       registryAuth:
         username: "{{ registry_username | default('') }}"
@@ -66,4 +88,4 @@
 
     - name: Échec du déploiement
       ansible.builtin.fail:
-        msg: "Smoke test KO après déploiement de {{ image_tag }} : rollback effectué, la version précédente est servie."
+        msg: "Smoke test KO après déploiement de {{ deploy_tag }} : rollback effectué, la version précédente est servie."

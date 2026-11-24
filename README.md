@@ -173,7 +173,7 @@ Limite assumée, conformément au sujet (pas de haute disponibilité demandée) 
 | Livrer une modification | Branche, PR, relecture par un autre membre, merge. Le pipeline déploie le staging, puis la production après approbation (*Review deployments*). Détail : [tutoriel, étape 7](docs/TUTORIEL.md) |
 | Déploiement en échec | Corriger, puis relancer le run du **dernier** commit de `main`. Les relances d'anciens runs sont refusées |
 | Revenir en arrière | Recommandé : `git revert` + PR. En urgence, sur k8s-1 : `KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm rollback taskflow -n taskflow` |
-| Lancer un playbook à la main | `ssh admin@10.1.20.72`, `cd ~/taskflow && git pull`, `cd infra/ansible`, `ansible-playbook playbooks/<playbook>.yml -e @secrets.yml` |
+| Lancer un playbook à la main | `ssh admin@10.1.20.72`, `cd ~/taskflow && git pull`, `cd infra/ansible`, `ansible-playbook playbooks/<playbook>.yml -e @secrets.yml`. Sans `-e image_tag=<sha>`, la version déjà déployée est conservée |
 | Commandes Kubernetes | `ssh admin@10.1.20.73` puis `kubectl …` (ou `kubeconfig-prod.yaml` depuis un PC, voir le tutoriel) |
 | Logs d'un service | Grafana > Explore > Loki : `{namespace="taskflow", component="backend"}` ; en direct : `kubectl -n taskflow logs -f deploy/taskflow-backend` |
 | Logs du runner CI | Sur staging-1 : `sudo journalctl -u 'actions.runner.*' -f` |
@@ -250,6 +250,7 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 | Une mise à jour casse `/api` alors que Helm la déclare réussie | Le frontend est « prêt » (sa sonde ne teste pas le backend), donc `--atomic` ne voit rien | Smoke test post-déploiement frontend → backend → BDD dans Ansible, avec `helm rollback` automatique en cas d'échec |
 | Arrêt gracieux interrompu (SIGKILL au bout de 3 s) en compose | Délai d'arrêt Docker trop court | `stop_grace_period: 20s` explicite |
 | Premier `site.yml` en échec : `swapoff: Not superuser.` alors qu'on est root | Les « VM » Proxmox étaient des **conteneurs LXC** à 1 CPU / 512 Mo : pas assez de droits noyau ni de RAM pour k3s | Recréation en vraies VM KVM ; garde-fous Ansible en tête du rôle `common` (refus des conteneurs, RAM minimale) pour échouer tout de suite avec un message clair |
+| Relancer `site.yml` à la main a remplacé la production (`37106af`) par une **vieille image `latest`** : le logo du frontend avait disparu en prod mais pas en staging | Sans version précisée, `site.yml` déployait `latest`. Kubernetes a réutilisé l'image `latest` restée en cache sur les nœuds (`IfNotPresent`), alors que le staging, lui, retélécharge toujours | Sans `-e image_tag`, les rôles `app_prod` et `app_staging` **conservent la version déjà déployée**. La chart retélécharge toujours une image `latest` (`Always`) |
 | La relance d'un ancien run (#7) a redéployé une version **plus ancienne** que celle déjà en production (#9) | Une relance rejoue le commit d'origine, et l'approbation de la production ne vérifie pas que c'est le dernier | Garde-fou dans les jobs de déploiement : refus si le commit n'est pas le dernier de `main`. Retour arrière volontaire : `git revert` + PR, ou `helm rollback` |
 | Déploiement CI en échec, Ansible `UNREACHABLE`, alors que la clé fonctionne en manuel | Secret `ANSIBLE_SSH_PRIVATE_KEY` abîmé au copier-coller : le job ne présentait aucune clé valide (vu dans le journal sshd) | Copie par `Set-Clipboard` ; le workflow nettoie et valide la clé avec `ssh-keygen` et affiche son empreinte |
 | Premier job de déploiement en échec (`Collections Ansible`) juste après l'installation du runner | Le rôle `github_runner` démarrait le service **avant** d'installer Ansible : le runner a pris un job en attente dans la seconde | Installation d'Ansible déplacée avant l'enregistrement et le démarrage du runner |
@@ -273,6 +274,13 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 24/11/2026 : une relance de `site.yml` ne change plus la version servie
+- Incident : le 23/11 à 22 h 26, une relance manuelle de `site.yml` (répétition de la démo) a remplacé la production `37106af` par une ancienne image `latest` restée en cache sur les nœuds. Le logo du frontend avait disparu en production, mais pas en staging (qui retélécharge toujours).
+- `group_vars` : `image_tag` vide par défaut (au lieu de `latest`).
+- Rôles `app_prod` et `app_staging` : sans version explicite, ils relisent la version déjà déployée (valeurs de la release Helm, `.env` du staging) et la conservent. `latest` n'est utilisé qu'au tout premier déploiement. La CI, qui passe toujours le SHA, n'est pas concernée.
+- Chart : `imagePullPolicy: Always` quand le tag vaut `latest`, pour ne jamais réutiliser une vieille image en cache.
+- Testé : 9 cas de choix de version avec ansible-core 2.22 (relance, premier déploiement, version explicite), rendu de la chart (`Always` pour `latest`, `IfNotPresent` pour un SHA), syntaxe des playbooks.
 
 ### 23/11/2026 : mise à jour de la documentation technique, versions figées
 - Décision : le dépôt reste **public**. En privé, le plan gratuit de GitHub désactiverait la relecture obligatoire des PR et l'approbation de la production. Aucun secret n'est dans le dépôt, et les images restent privées.
