@@ -178,7 +178,7 @@ Cette étape modifie le cluster : ne la faire que si la répétition s'est bien 
    kubectl get nodes
    ```
 
-   **Attendu :** k8s-1 et k8s-2 `Ready`.
+   **Attendu :** k8s-1 et k8s-2 `Ready`, et k8s-2 retrouve son rôle `worker`. Ce label avait disparu avec le nœud : c'est Ansible qui le repose.
 
 ---
 

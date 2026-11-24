@@ -287,6 +287,11 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
 
+### 24/11/2026 : rôle `worker` affiché pour k8s-2
+- `kubectl get nodes` affichait `<none>` comme rôle de k8s-2 : k3s n'étiquette que le control-plane. Le rôle `k3s_agent` pose désormais le label `node-role.kubernetes.io/worker=true`, depuis le serveur, car le kubelet n'a pas le droit de se le donner lui-même. La tâche est idempotente (`--overwrite`, `changed` seulement si le label manquait).
+- Le label est purement informatif : le placement des pods ne change pas.
+- `docs/DEMO.md` (démo 2.2) et `docs/DEMO-LIGHT.md` : le résultat attendu mentionne les rôles.
+
 ### 24/11/2026 : schémas d'architecture dans le README
 - Le README devient le livrable d'explication du projet. Trois schémas sont ajoutés dans `docs/images/` : les machines, le parcours du commit à la requête et le pipeline CI/CD. Chacun est suivi d'un mode de lecture.
 - Le schéma Mermaid de l'architecture est remplacé par sa version redessinée. Celui du pipeline est conservé pour le détail des jobs.
