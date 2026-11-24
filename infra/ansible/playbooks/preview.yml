@@ -1,0 +1,47 @@
+# Environnement de test d'une pull request, sur la VM créée par Terraform (infra/terraform/preview).
+# Mêmes rôles que le staging : la PR est testée comme elle sera déployée.
+# Lancé par la CI (job "preview" du pipeline) :
+#   ansible-playbook playbooks/preview.yml -e @secrets.yml \
+#     -e pr_number=<n> -e preview_ip=<ip> -e image_tag=<tag> -e db_image_tag=<tag>
+- name: Déclarer la VM de la PR
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ajouter la VM à l'inventaire (groupe preview)
+      ansible.builtin.add_host:
+        name: "pr-{{ pr_number }}"
+        groups: preview
+        ansible_host: "{{ preview_ip }}"
+        # VM recréée d'une PR à l'autre sur les mêmes IP : sa clé d'hôte change, on ne la mémorise pas.
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+- name: Attendre la fin du premier démarrage
+  hosts: preview
+  gather_facts: false
+  tasks:
+    - name: Attendre que SSH réponde
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    # cloud-init fait ses propres apt au premier démarrage : sans cette attente, apt est verrouillé.
+    - name: Attendre la fin de cloud-init
+      ansible.builtin.command: cloud-init status --wait
+      register: cloud_init
+      changed_when: false
+      failed_when: cloud_init.rc not in [0, 2] # 2 = terminé avec des avertissements
+
+- name: Socle commun et Docker
+  hosts: preview
+  become: true
+  roles:
+    - common
+    - docker
+
+- name: Application (même déploiement docker compose que le staging)
+  hosts: preview
+  become: true
+  vars:
+    staging_monitoring: false # environnement jetable : ni Prometheus ni Grafana
+  roles:
+    - app_staging

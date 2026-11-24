@@ -6,6 +6,9 @@ npm-debug.log*
 infra/ansible/secrets.yml
 infra/ansible/kubeconfig-prod.yaml
 *.retry
+.terraform/
+*.tfstate
+*.tfstate.*
 
 # Éditeurs / OS
 .vscode/

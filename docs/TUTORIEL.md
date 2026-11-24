@@ -36,7 +36,7 @@ Les blocs de commandes indiquent où les lancer : **Windows (PowerShell)** ou **
 flowchart LR
   E1[1. VM] --> E2[2. Twingate] --> E4[4. Admin sur staging-1]
   E3[3. GitHub + push + images publiques] --> E4
-  E4 --> E5[5. site.yml] --> E6[6. Secrets + runner] --> E7[7. Premier déploiement continu] --> E8[8. Répétition]
+  E4 --> E5[5. site.yml] --> E6[6. Secrets + runner] --> E7[7. Premier déploiement continu] --> E8[8. Environnements de PR] --> E9[9. Répétition]
 ```
 
 ---
@@ -383,7 +383,74 @@ C'est le circuit à suivre pour **toute** modification.
 
 ---
 
-## Étape 8 : préparer la soutenance
+## Étape 8 : environnement de test des pull requests (Terraform) (≈ 30 min)
+
+À chaque PR, le pipeline crée une VM Proxmox avec Terraform, Ansible y déploie la version de la PR, et le lien est publié dans la PR. À la fermeture de la PR, la VM est détruite. Fonctionnement détaillé : [README, Pipeline CI/CD](../README.md#environnement-de-test-de-chaque-pull-request-terraform).
+
+Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox (*Datacenter > nom du nœud > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les noms `local-lvm` (stockage) et `vmbr0` (bridge) sont ceux d'une installation par défaut : remplacez-les si les VM du projet utilisent d'autres valeurs (*VM > Hardware*).
+
+### 8.1 Template Debian 13 cloud-init
+
+```bash
+# Proxmox (shell root du nœud)
+pveum pool add taskflow-preview --comment "TaskFlow : VM temporaires des pull requests"
+cd /tmp && wget -q https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+qm create 9000 --name debian13-cloud-template --pool taskflow-preview --ostype l26 \
+  --cores 2 --memory 2048 --cpu x86-64-v2-AES --scsihw virtio-scsi-single \
+  --net0 virtio,bridge=vmbr0 --serial0 socket --vga serial0
+qm set 9000 --scsi0 local-lvm:0,import-from=/tmp/debian-13-genericcloud-amd64.qcow2,discard=on
+qm set 9000 --ide2 local-lvm:cloudinit --boot order=scsi0
+qm template 9000
+rm /tmp/debian-13-genericcloud-amd64.qcow2
+```
+
+> ⚠️ **Ne démarrez jamais le template.** Au premier démarrage, il générerait son machine-id, et tous les clones auraient alors le même.
+
+### 8.2 Utilisateur et jeton API limités aux VM de PR
+
+Le jeton n'a de droits **que sur le pool `taskflow-preview`** : il ne peut ni voir ni modifier staging-1, k8s-1 et k8s-2.
+
+```bash
+# Proxmox (shell root du nœud)
+pveum user add terraform@pve --comment "TaskFlow : environnements de PR (Terraform, CI)"
+pveum aclmod /pool/taskflow-preview -user terraform@pve -role PVEVMAdmin
+pveum aclmod /storage/local-lvm -user terraform@pve -role PVEDatastoreUser
+pveum aclmod /sdn/zones/localnetwork -user terraform@pve -role PVESDNUser   # Proxmox 8 et plus
+pveum user token add terraform@pve ci --privsep 0
+```
+
+La dernière commande affiche le secret du jeton (`value`) **une seule fois**. Le jeton complet est `terraform@pve!ci=<value>`.
+
+### 8.3 Réseau
+
+1. **Plage d'IP réservée** : la PR n° N reçoit l'IP `10.1.20.(100 + N modulo 10)`, donc la plage 10.1.20.100 à 10.1.20.109. Vérifiez qu'aucune machine ne l'utilise et qu'elle est hors de la plage DHCP de la box. Si besoin, changez `ip_first_host` dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars).
+2. **Twingate** : ajoutez une ressource pour cette plage, par exemple `10.1.20.96/28`, au moins sur le port 8080, ou réutilisez la ressource du sous-réseau si elle existe.
+3. **API Proxmox joignable depuis le runner** :
+   ```bash
+   # staging-1 (bash)
+   curl -sk -o /dev/null -w '%{http_code}\n' https://<IP du Proxmox>:8006/api2/json/version   # attendu : 401
+   ip route | awk '/default/ {print "passerelle :", $3}'
+   ```
+
+### 8.4 Configuration
+
+1. Dans [terraform.tfvars](../infra/terraform/preview/terraform.tfvars), renseignez les 3 valeurs `A-RENSEIGNER` : `proxmox_endpoint`, `proxmox_node` et `gateway`. Faites-le dans une branche et une PR, comme toute modification. Tant qu'elles ne sont pas renseignées, Terraform refuse de s'exécuter, avec un message explicite.
+2. Dans GitHub, *Settings > Secrets and variables > Actions* :
+   - secret `PROXMOX_API_TOKEN` = `terraform@pve!ci=<value>` ;
+   - variable `PREVIEW_ENABLED` = `true`. C'est l'interrupteur : supprimez-la, ou mettez-la à `false`, pour revenir au pipeline sans environnement de PR.
+
+✅ **Vérification** :
+- sur une PR, le job **Environnement de test de la PR** est vert ;
+- un commentaire donne le lien, par exemple http://10.1.20.102:8080 pour la PR #12 ;
+- le pied de page de l'application affiche `pr-12-<sha>` ;
+- la VM `taskflow-pr-12` apparaît dans le pool `taskflow-preview` ;
+- à la fermeture de la PR, le workflow **Destruction environnement de PR** est vert, et la VM a disparu de Proxmox.
+
+> Une fois le job fiable, il peut devenir obligatoire avant le merge : ajoutez *Environnement de test de la PR* aux checks requis du ruleset `protection-main` (étape 3.6).
+
+---
+
+## Étape 9 : préparer la soutenance
 
 - [ ] **Changer le mot de passe du compte `admin`** sur les 3 VM (`passwd`) : c'est un mot de passe par défaut. Ansible et la CI n'en ont plus besoin, ils passent par la clé SSH et sudo sans mot de passe.
 - [ ] Répéter le déroulé de [DEMO.md](DEMO.md) au moins une fois, chronomètre en main.
@@ -409,6 +476,11 @@ C'est le circuit à suivre pour **toute** modification.
 | Job CI en échec : `sudo: a password is required` | `site.yml` n'a jamais été mené jusqu'au rôle `common` | relancer `site.yml -e @secrets.yml -K` depuis staging-1 |
 | Le worker k8s-2 n'apparaît pas dans `kubectl get nodes` | VM clonée : hostname ou machine-id identiques | encadré de l'étape 1, puis `sudo /usr/local/bin/k3s-agent-uninstall.sh` sur k8s-2 et relancer `site.yml` |
 | Pods en `ImagePullBackOff`, ou `unauthorized` au `docker compose pull` | jeton de lecture absent, expiré ou sans `read:packages` | étape 3.5 ; vérifier `registry_password` dans `secrets.yml` et le secret `GHCR_READ_TOKEN`, puis relancer le déploiement |
+| Environnement de PR : Terraform `403 Permission check failed` | jeton créé avec séparation des privilèges, ou droits manquants | étape 8.2 : `--privsep 0`, et les 3 `aclmod` (pool, stockage, SDN) |
+| Environnement de PR : Terraform `VM 91xx already exists` / `config file already exists` | un run annulé en pleine création a laissé une VM que l'état Terraform ne connaît pas | supprimer la VM 91xx du pool `taskflow-preview` dans Proxmox, puis *Re-run failed jobs* |
+| Environnement de PR : Ansible `UNREACHABLE` sur `pr-<n>` | IP, passerelle ou bridge incorrects dans `terraform.tfvars`, ou template démarré une fois | console de la VM dans Proxmox (`ip a`, `cloud-init status --long`) ; corriger puis relancer |
+| Deux PR se partagent la même IP | PR n° N et N+10 ouvertes en même temps (plage de 10 adresses) | fermer l'une des deux, ou agrandir `ip_pool_size` (et la plage réservée) |
+| Une VM de PR reste après la fermeture de la PR | `PREVIEW_ENABLED` désactivé entre-temps, ou destruction en échec | *Actions > Destruction environnement de PR > Run workflow*, avec le numéro de la PR |
 | `docker login ghcr.io` refusé alors que le jeton est neuf | l'organisation bloque les jetons *classic*, ou le compte n'a pas accès aux packages | étape 3.1 (*Personal access tokens*) ; vérifier que `Poliaqt` voit bien les packages de l'organisation |
 | Pods en `Pending` | RAM ou CPU insuffisants | `kubectl describe pod <pod>` ; augmenter la RAM de la VM, ou `loki_enabled: false` dans `group_vars/all.yml` |
 | Timeout sur `kube-prometheus-stack` | téléchargement des images trop lent | relancer `site.yml` (idempotent) |
