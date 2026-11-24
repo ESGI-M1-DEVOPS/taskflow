@@ -11,6 +11,24 @@
     mode: "0644"
     directory_mode: "0755"
 
+# Même règle qu'en production : sans image_tag explicite, on garde la version déjà déployée.
+- name: Lire la version actuellement déployée en staging
+  ansible.builtin.slurp:
+    src: "{{ staging_dir }}/deploy/compose/.env"
+  register: current_env
+  failed_when: false
+  when: image_tag | default('') | length == 0
+
+- name: Choisir la version à déployer
+  ansible.builtin.set_fact:
+    deploy_tag: "{{ image_tag if (image_tag | default('') | length > 0) else (current_tags | first | default('latest', true)) }}"
+  vars:
+    current_tags: "{{ (current_env.content | default('') | b64decode) | regex_findall('(?m)^IMAGE_TAG=(\\S+)$') }}"
+
+- name: Version qui va être déployée
+  ansible.builtin.debug:
+    msg: "image_tag={{ deploy_tag }} ({{ 'demandée' if (image_tag | default('') | length > 0) else 'conservée : version déjà déployée' }})"
+
 - name: Générer le fichier .env (version à déployer + secrets)
   ansible.builtin.template:
     src: env.j2
@@ -47,7 +65,7 @@
   # Avec "latest", l'image porte le SHA de son commit : on ne compare la version que pour un tag explicite.
   until: >-
     staging_version.status | default(0) == 200 and
-    (image_tag == 'latest' or (staging_version.json | default({})).version | default('') == image_tag)
+    (deploy_tag == 'latest' or (staging_version.json | default({})).version | default('') == deploy_tag)
   retries: 12
   delay: 5
 

@@ -4,7 +4,10 @@
 # --- Images ---
 registry: ghcr.io
 image_owner: esgi-m1-devops    # organisation GitHub, en minuscules (exigé par GHCR)
-image_tag: latest              # surchargé par la CI : -e image_tag=<sha>
+# Version à déployer. La CI la passe toujours (-e image_tag=<sha>).
+# Vide = conserver la version DÉJÀ déployée (relancer site.yml ne change pas la version servie) ;
+# "latest" seulement au tout premier déploiement.
+image_tag: ""
 db_image_tag: "1.0.0"          # cf. app/db/VERSION
 
 # Images PRIVÉES : lecture avec un jeton GitHub classique "read:packages".
