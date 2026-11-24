@@ -387,7 +387,7 @@ C'est le circuit à suivre pour **toute** modification.
 
 À chaque PR, le pipeline crée une VM Proxmox avec Terraform, Ansible y déploie la version de la PR, et le lien est publié dans la PR. À la fermeture de la PR, la VM est détruite. Fonctionnement détaillé : [README, Pipeline CI/CD](../README.md#environnement-de-test-de-chaque-pull-request-terraform).
 
-Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox `SRV-LVNO-PROD-02` (*Datacenter > SRV-LVNO-PROD-02 > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les VM de PR utilisent le stockage `syno-lun01` (LUN iSCSI du Synology) et le bridge `vmbr0`. Sur un autre Proxmox, prenez les valeurs des VM existantes (*VM > Hardware*).
+Les étapes 8.1 et 8.2 se font **une seule fois**, dans le shell root du nœud Proxmox `SRV-LNVO-PROD-02` (*Datacenter > SRV-LNVO-PROD-02 > Shell*). Si vous n'avez pas ce droit, demandez au propriétaire du Proxmox de les lancer. Les VM de PR utilisent le stockage `syno-lun01` (LUN iSCSI du Synology) et le bridge `vmbr0`. Sur un autre Proxmox, prenez les valeurs des VM existantes (*VM > Hardware*).
 
 ### 8.1 Template Debian 13 cloud-init
 
@@ -477,6 +477,7 @@ La dernière commande affiche le secret du jeton (`value`) **une seule fois**. L
 | Le worker k8s-2 n'apparaît pas dans `kubectl get nodes` | VM clonée : hostname ou machine-id identiques | encadré de l'étape 1, puis `sudo /usr/local/bin/k3s-agent-uninstall.sh` sur k8s-2 et relancer `site.yml` |
 | Pods en `ImagePullBackOff`, ou `unauthorized` au `docker compose pull` | jeton de lecture absent, expiré ou sans `read:packages` | étape 3.5 ; vérifier `registry_password` dans `secrets.yml` et le secret `GHCR_READ_TOKEN`, puis relancer le déploiement |
 | Environnement de PR : Terraform `403 Permission check failed` | jeton créé avec séparation des privilèges, ou droits manquants | étape 8.2 : `--privsep 0`, et les 3 `aclmod` (pool, stockage, SDN) |
+| Environnement de PR : Terraform `HTTP 500 ... hostname lookup '<nœud>' failed` | nom de nœud inexact dans `terraform.tfvars` (sensible à la casse ; vécu : deux lettres inversées) | reprendre le nom affiché dans l'arbre *Datacenter* de Proxmox, ou le `CN` du certificat de `https://<IP>:8006` |
 | Environnement de PR : Terraform `VM 91xx already exists` / `config file already exists` | un run annulé en pleine création a laissé une VM que l'état Terraform ne connaît pas | supprimer la VM 91xx du pool `taskflow-preview` dans Proxmox, puis *Re-run failed jobs* |
 | Environnement de PR : Ansible `UNREACHABLE` sur `pr-<n>` | IP, passerelle ou bridge incorrects dans `terraform.tfvars`, ou template démarré une fois | console de la VM dans Proxmox (`ip a`, `cloud-init status --long`) ; corriger puis relancer |
 | Deux PR se partagent la même IP | PR n° N et N+10 ouvertes en même temps (plage de 10 adresses) | fermer l'une des deux, ou agrandir `ip_pool_size` (et la plage réservée) |

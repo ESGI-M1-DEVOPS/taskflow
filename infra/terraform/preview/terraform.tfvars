@@ -3,7 +3,7 @@
 # Mise en place côté Proxmox (template, pool, jeton) : docs/TUTORIEL.md, étape 8.
 
 proxmox_endpoint = "https://10.1.98.5:8006/" # joignable depuis staging-1 (vérifié : HTTP 401 sans jeton)
-proxmox_node     = "SRV-LVNO-PROD-02"        # nœud qui héberge staging-1, k8s-1 et k8s-2
+proxmox_node     = "SRV-LNVO-PROD-02"        # nom exact du nœud (CN de son certificat), sensible à la casse
 
 template_vm_id = 9000               # template Debian 13 cloud-init
 pool_id        = "taskflow-preview" # seul pool sur lequel le jeton a des droits

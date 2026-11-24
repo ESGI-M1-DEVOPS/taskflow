@@ -319,7 +319,7 @@ Le plus récent en haut. Chaque modification du projet est notée ici.
   - nouveau workflow `preview-cleanup.yml`, qui lance `terraform destroy` à la fermeture de la PR ou à la demande ;
   - le lint vérifie aussi le format et la validité de la configuration Terraform.
 - Activation par la variable GitHub `PREVIEW_ENABLED`. Jamais pour une PR venant d'un fork.
-- Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LVNO-PROD-02`, stockage `syno-lun01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
+- Valeurs de notre Proxmox : API 10.1.98.5, nœud `SRV-LNVO-PROD-02`, stockage `syno-lun01` (LUN iSCSI), IP 10.1.20.100 à .109. Le masque est en `/8`, comme les 3 VM existantes, qui joignent ainsi le connecteur Twingate (10.1.40.3) en direct.
 - Tutoriel : nouvelle étape 8 (template, pool et jeton Proxmox limités, plage d'IP, Twingate, secret). L'ancienne étape 8 devient l'étape 9.
 
 ### 24/11/2026 : rôle `worker` affiché pour k8s-2
