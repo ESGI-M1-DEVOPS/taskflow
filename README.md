@@ -260,7 +260,7 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 
 - [docs/TUTORIEL.md](docs/TUTORIEL.md) : la mise en place pas à pas, des VM vierges au premier déploiement continu.
 - [docs/CONTRAT-INTEGRATION.md](docs/CONTRAT-INTEGRATION.md) : la spécification commune proposée aux autres équipes, côté conteneurs (DevOps) et côté plateforme (SysOps).
-- [docs/DEMO.md](docs/DEMO.md) : le déroulé de la soutenance, critère par critère.
+- [docs/DEMO.md](docs/DEMO.md) : la fiche d'exécution de la soutenance. Pour chaque démo : le critère visé, le terminal à utiliser, les commandes exactes, le résultat attendu et la remise en état.
 
 ## Répartition des rôles
 
@@ -274,6 +274,16 @@ Relevées sur les VM le 23/11/2026. Celles marquées 📌 sont figées dans [gro
 ## Journal des modifications
 
 Le plus récent en haut. Chaque modification du projet est notée ici.
+
+### 24/11/2026 : scénario de démo en fiche d'exécution
+- `docs/DEMO.md` réécrit :
+  - les 3 terminaux de la démo (LOCAL, ADMIN, CLUSTER) et la préparation avec vérifications ;
+  - pour chaque démo : critère de la grille, commandes complètes, résultat attendu ;
+  - un ordre conseillé (la PR de la démo 4 est lancée en premier, pour que la CI tourne pendant les autres démos) ;
+  - une section de remise en état et un plan B.
+- Démo de fonctionnalité : un compteur de tâches restantes, en deux modifications du frontend, au lieu de la priorité des tâches (plus rapide et sans migration en direct). Code vérifié : syntaxe et rendu.
+- Ajouts : recréation du nœud k8s-2 avec `kubectl delete node` (sinon k3s refuse le retour du nœud), refus d'un vieux run en relançant un seul job, sonde lancée avec `-ExecutionPolicy Bypass`, retour à la normale de l'auto-scaling.
+- Tutoriel : la case de préparation pointe vers la démo 4.
 
 ### 24/11/2026 : une relance de `site.yml` ne change plus la version servie
 - Incident : le 23/11 à 22 h 26, une relance manuelle de `site.yml` (répétition de la démo) a remplacé la production `37106af` par une ancienne image `latest` restée en cache sur les nœuds. Le logo du frontend avait disparu en production, mais pas en staging (qui retélécharge toujours).
